@@ -10,11 +10,11 @@ int main(int argc, char *argv[]){
         printf("argv[%d]: %s\n", i, argv[i]);
     }
 
-    char *thisEnv = *environ;
-    int i = 0;
-    while(thisEnv != 0){
-        printf("environ[%d]: %s\n", i, thisEnv);
-        i++;
-        thisEnv = *(environ + i);
-    }
+    // char *thisEnv = *environ;
+    // int i = 0;
+    // while(thisEnv != 0){
+    //     printf("environ[%d]: %s\n", i, thisEnv);
+    //     i++;
+    //     thisEnv = *(environ + i);
+    // }
 }
