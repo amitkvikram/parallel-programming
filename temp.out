@@ -1,0 +1,9 @@
+Current Process Pid = 21041
+Before Fork
+You took hell of a shot
+(We are in parent)Child Pid = 21042
+Pid = 21041 var = 1
+Before Fork
+You took hell of a shot
+(We are in child) Pid = 21042
+Pid = 21042 var = 2
