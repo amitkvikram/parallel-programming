@@ -5,6 +5,11 @@
 using namespace std;
 const int inf = 1e8;
 
+typedef struct{
+    int haredist;
+    int turtleDist;
+} result;
+
 typedef struct {
     int hareDist;
     int turtleDist;
@@ -17,13 +22,10 @@ typedef struct{
 
 int main(){
     int trackLength = 1000, pid, nByte;
-    int masterHare[2];   //masterHare[0] for reading and masterHare[1] for writing
-    int hareGod[2];
-    int turtleGod[2];
-    int masterGod[2];
-    int masterTurtle[2];
-    int reporterHare[2];
-    int reporterTurtle[2];
+    int hareToTurtle[2], turtleToHare[2];
+    int godToTurtle[2], godToHare[2];
+    int HareToReporter[2];
+    int hareToMaster[2];
 
     pid_t pids[4];
     pid_t &harePid = pids[0], &turtlePid = pids[1], 
@@ -36,7 +38,12 @@ int main(){
     cout<<"Master Pid = "<<masterPid<<endl;
 
     //Pipes Creation
-    if(pipe(masterHare) < 0){
+    if( pipe(hareToTurtle) < 0  || 
+        pipe(turtleToHare) < 0  ||
+        pipe(godtoTurtle) < 0   ||
+        pipe(godToHare) < 0     ||
+        pipe(HareToReporter) < 0||
+        pipe(hareToMaster) < 0    ){
         cout<<"Error in Creating pipe\n";
         return 0;
     }
@@ -84,7 +91,22 @@ int main(){
     }
 
     else if(harePid == 0){   //Hare Process
-        cout<<"HareProces: "<<getpid()<<endl;      
+        cout<<"HareProces: "<<getpid()<<endl;  
+        int hareDist = 0, hareTime = 0, turtleTime = -1, turtleDist = 0;
+        write(hareToTurtle, &hareDist, sizeof(hareDist));   //say turtle to run
+        while(hareDist < trackLength && turtleDist < trackLength){
+            read(turtleToHare[0], &turtleDist, sizeof(turtleDist));
+            if(haredist < trackLength){
+                read(godToHare, &hareDist, sizeof(hareDist));
+                hareTime ++;
+                hareDist+=3;
+            }
+        }
+
+        score s;
+        s.hareTime = hareTime;
+        s.turtleTime = turtleTime
+        write(hareToMaster, )
     }
 
     else if(turtlePid == 0){  //turtle process
