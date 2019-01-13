@@ -31,12 +31,23 @@ typedef struct{
 
 //semaphore for input and output on terminal
 char terminalSemaphore[] = "/sem_terminal";
+char iterSemaphore[] = "/sem_iter";
+
+//Semaphore pointers
+sem_t *mutex_iter;
+sem_t *mutex1;
 
 //SIGTERM hadler for reporter process
 void handle_sigterm(int sig){
-    // cout<<"hadling termination\n";
     sem_unlink(terminalSemaphore);
-    // cout<<"handled\n";
+    sem_close(mutex1);
+    exit(0);
+}
+
+//SIGTERM handler for god process
+void handle_sigtermGod(int sig){
+    sem_unlink(iterSemaphore);
+    sem_close(mutex_iter);
     exit(0);
 }
 
@@ -56,6 +67,9 @@ int main(){
 
     masterPid = getpid();
     cout<<"Master Pid = "<<masterPid<<endl;
+
+    //Ignore SIGCHLD signal
+    signal(SIGCHLD, SIG_IGN);
 
     //Pipes Creation
     if( pipe(hareToTurtle) < 0  || 
@@ -81,16 +95,12 @@ int main(){
     /*Processes Created */
 
     /*Some Initalization work*/
-
+    srand (time(NULL));
     fcntl(hareToReporter[0], F_SETFL, O_NONBLOCK);
-
     /************************/
 
     if( (harePid & turtlePid & godPid & reporterPid) > 0){  //parent... 
         int status;
-        cout<<"Parent Process: "<<"pid = "<<getpid()<<endl;
-        cout<<"Parent Process: "<<"harePid turtlePid godPid reporterPid\n";
-        cout<<"Parent Process: "<<harePid<<" "<<turtlePid<<" "<<godPid<<" "<<reporterPid<<endl;
         result res;
         read(hareToMaster[0], &res, sizeof(res));
         cout<<"Time Taken: [Hare: "<<res.hareTime<<"][Turtle: "<<res.turtleTime<<"]\n";
@@ -106,41 +116,40 @@ int main(){
         //Stop all the processes
         kill(reporterPid, SIGTERM);
         kill(godPid, SIGTERM);
-        // cout<<"god killed\n";
-        waitpid(reporterPid, &status, 0);
-        waitpid(godPid, &status, 0);
-        waitpid(harePid, &status, 0);
-        waitpid(turtlePid, &status, 0);
         //Processes Stopped
     }
 
     else if(harePid == 0){   //Hare Process
-        cout<<"HareProces: "<<getpid()<<endl; 
         int sleepTime = 0;
         score s;
         details hare = {0, 0}, turtle = {0, 0};
-        write(hareToTurtle[1], &hare, sizeof(hare));   //say turtle to run; urtle->hare->
+        write(hareToTurtle[1], &hare, sizeof(hare));   //say turtle to run; turtle->hare->
+        mutex_iter = sem_open(iterSemaphore, O_CREAT, 0644, 1);
         while(hare.dist < trackLength || turtle.dist < trackLength){
-            // cout<<"hare Scheduled\n";
+            cout<<"hare Scheduled\n";
             if(turtle.dist < trackLength)
                 read(turtleToHare[0], &turtle, sizeof(turtle));
             if(hare.dist < trackLength){
-                //read(godToHare[0], &hare.dist, sizeof(hare.dist));
-                if(hare.dist > turtle.dist + 1 && sleepTime == 0){
-                    cout<<"sleeping\n";
-                    sleepTime = 60;
+                read(godToHare[0], &hare.dist, sizeof(hare.dist));
+                if(hare.dist > turtle.dist + (rand() % 30 + 10) && sleepTime == 0){
+                    // cout<<"sleeping\n";
+                    sleepTime = rand() % 30 + 20;
                 }
                 hare.time ++;
                 if(sleepTime == 0) hare.dist+=3;
                 else sleepTime--;
             }
+            cout<<"no\n";
             s = {hare.dist, turtle.dist};
             write(hareToReporter[1], &s, sizeof(s));
             write(hareToTurtle[1], &hare, sizeof(hare));
+            sem_trywait(mutex_iter);
+            sem_post(mutex_iter);
+            cout<<"hare1\n";
         }
         result res = {hare.time, turtle.time};
         write(hareToMaster[1], &res, sizeof(res));
-        // cout<<"Hare Exited\n";
+        cout<<"Hare Exited\n";
         return 0;
     }
 
@@ -148,23 +157,38 @@ int main(){
         cout<<"turtle process: "<<getpid()<<endl;
         details hare = {0, 0}, turtle = {0, 0};
         while(turtle.dist < trackLength){
-            // cout<<"Turtle Sheduled\n";
+            cout<<"Turtle Sheduled\n";
             read(hareToTurtle[0], &hare, sizeof(hare));
-            //read(godToHare[0], &turtle.dist, sizeof(turtle.dist));
+            read(godToHare[0], &turtle.dist, sizeof(turtle.dist));
             turtle.time++;
             turtle.dist+=1;
             write(turtleToHare[1], &turtle, sizeof(turtle));
         }
-        // cout<<"Turtle Exited\n";
+        cout<<"Turtle Exited\n";
         return 0;
     }
 
     else if(godPid == 0){    //god process
         cout<<"god process: "<<getpid()<<endl;
         char status;
-        sem_t *mutex = sem_open(terminalSemaphore, O_CREAT, 0644, 1);
+        int newHareDist, newTurtleDist;
+        mutex1 = sem_open(terminalSemaphore, O_CREAT, 0644, 1);
+        mutex_iter = sem_open(iterSemaphore, O_CREAT, 0644, 1);
+        signal(SIGTERM, handle_sigtermGod);
         while(true){
-            
+            cout<<"god scheduled\n";
+            // if(sem_trywait(mutex_iter) == -1){
+            //     cout<<"god in trouble\n";
+            // }
+            sem_wait(mutex_iter);
+            cout<<"god1\n";
+            sem_wait(mutex1);
+            cout<<"god turn\n";
+            cout<<"Enter New Positions of Hare and turtle(space separated): ";
+            cin>>newHareDist>>newTurtleDist;
+            write(godToHare[1], &newHareDist, sizeof(newHareDist));
+            write(godToTurtle[1], &newTurtleDist, sizeof(newTurtleDist));
+            sem_post(mutex1);
         }
     }
 
@@ -172,7 +196,7 @@ int main(){
     else{      //reporter process
         cout<<"reporter process: "<<getpid()<<endl;
         score s;
-        sem_t *mutex = sem_open(terminalSemaphore, O_CREAT, 0644, 1);
+        mutex1 = sem_open(terminalSemaphore, O_CREAT, 0644, 1);
         signal(SIGTERM, handle_sigterm);
         bool moseRecent = true;
         int nByte;
@@ -180,15 +204,16 @@ int main(){
             // while(())
             // cout<<"reporter Scheduled\n";
             if((nByte = read(hareToReporter[0], &s, sizeof(s))) < 0 && !(moseRecent)){
-                // sem_wait(mutex);
+                sem_wait(mutex1);
                 cout<<"-----------------\n";
                 cout<<"Hare Postion: "<<s.hareDist<<"\nTurtle Position: "<<s.turtleDist<<endl;
                 moseRecent = true;
-                // sem_post(mutex);
+                sem_post(mutex1);
             }
             else if(nByte > 0){
                 moseRecent = false;
             }
+            // break;
         }
         // signal()
     }
