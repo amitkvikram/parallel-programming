@@ -6,6 +6,8 @@ int main()
 { 
     // Create a child process       
     int pid = fork(); 
+    thread.out: assgn1.cpp
+	g++ -pthread assgn1.cpp -o thread.out
   
     if (pid > 0) 
         printf("in parent process"); 
