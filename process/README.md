@@ -1,6 +1,7 @@
-##### Task: Simulate Hare and turtoise race using processes.
+### Task: Simulate Hare and turtoise race using processes.
 
 - There will be four processes named Hare, Turtoise, God and Reporter
+- There is one master process which will fork all the four processes.
 - Hare process will represent hare.
 - Turtoise process will represent turtoise.
 
@@ -23,4 +24,10 @@ God Process:
   - By default reading from pipe is blocking but one can change the setting using following command:
     ``` fcntl(pipeFileDescripor, F_SETFL, O_NONBLOCK);```
   - 6 pipes are used: 
-      - hareToTurtle: Hare is writer and turtle is reader.
+      - hareToTurtle: Hare is writer and turtle is reader. After taking one step hare tells turtoise to take one step by writing  in pipe. Turtoise will be waiting for message from hare in blocking mode. Once hare writes the message turtoise reads it and take one step. 
+       - turtoise to Hare. Turtoise is writer and Hare is reader. After taking one step turtoise tells hare to take one step by writing in pipe. Hare will be waiting for message from turtoise in blocking mode.Once turtoise writes the message hare reads it and take one step.
+       - gotToTurotise: God is writer and Turtoise is reader. God writes position where it wants to reposition the turtoise(by reading values from terminal), if god doesn't want to reposition turtoise it writes -1 in the pipe. Turtoise waits for reading the data from this pipe in blocking mode.
+       - godToHare: God is writer and Hare is reader. God writes position where it wants to reposition the hare(by reading values form terminal), if god doesn't want to repostion hare it writes -1 in the pipe.
+       - hareToReporter: Hare is wirter and Reporter is reader. Hare process writes position of both Hare and Turtoise in this pipe. Reporter reads from this in **non blocking mode** and after reading prints on terminal.
+       - hareToMaster: Hare is writer and Master is reader. After forking all the processes hare reads from this pipe in blocking mode. When race is finished hare writes time taken by hare and turtoese to this pipe. After reading from this pipe master decides which is winner.
+     
