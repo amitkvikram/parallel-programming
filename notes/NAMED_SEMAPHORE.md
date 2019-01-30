@@ -22,12 +22,16 @@
     
     - Removes the named semaphore. 
  
+ 
  **Destory Semaphore**:
-  1. sem_close: closes the open reference. However when process exits all the open references are automatically closed.
-  2. sem_unlink(): removes the semaphore name immediately. Semaphore is destroyed immediately if there are no open reference to the semaphore. If there are open references when sem_unlink is called then sempahore is destroyed once all references are closed(remember that you don't have to call sem_unlik again).
-  3. So For semaphore to be destroyed sem_unlink must be called once before process exits.
+ 
+  - sem_close: closes the open reference. However when process exits all the open references are automatically closed.
+  - sem_unlink(): removes the semaphore name immediately. Semaphore is destroyed immediately if there are no open reference to the semaphore. If there are open references when sem_unlink is called then sempahore is destroyed once all references are closed(remember that you don't have to call sem_unlik again).
+  - So For semaphore to be destroyed sem_unlink must be called once before process exits.
+  
   
   **Life Scope of Semaphore**:
+  
 - if *sem_unlink* is not called explicitly then semaphore exists untill system reboots.
 - Semaphore value is saved across processes. So if you create a semaphore and when you exit from process semaphore value is x then next time you open semaphore anywhere its initial value will be x(Remember that since semaphore is already created then value argument in sem_open is ignored).
 - Run program [namedSem.cpp](namedSem.cpp)
@@ -35,4 +39,22 @@
     - When you run the program second time you will not be able to lock the semaphore. This is because semaphore value is saved.
     - Note that it's obvious behavior because named semaphore has nothing to do a process. 
     
-  ** A Trick to Handle Initial Value**:
+  **A Trick to Handle Initial Value**: 
+  - Suppose in your program you want your semaphore to be initialized with initial value SEM_INITAL_VALUE. You don't want to worry about whether other process succesfully unlinked semaphore or not.
+  - Refer [namedSemWithInit.cpp](namedSemWithInit.cpp). 
+    Flow of program is:
+        - Open semaphore.
+        - Keep on executing sem_trywait() until it returns -1. sem_trywait returns -1 when semaphore value is 0.
+        - Now call sem_post for SEM_INITIAL_VALUE, this will increment value of semaphore to SEM_INITAL_VALUE.
+        - Code snippet:
+            ```
+            
+            //Decrease the value of semaphore to 0
+            while(sem_trywait(sem_mtx) != -1){
+            }
+            //increase the value of semaphore to SEM_INITIAL_VAL
+            for(int i = 0; i < SEM_INITIAL_VAL; i ++){
+                sem_post(sem_mtx);
+            }
+            
+           ```
