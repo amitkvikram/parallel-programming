@@ -30,4 +30,9 @@
   **Life Scope of Semaphore**:
 - if *sem_unlink* is not called explicitly then semaphore exists untill system reboots.
 - Semaphore value is saved across processes. So if you create a semaphore and when you exit from process semaphore value is x then next time you open semaphore anywhere its initial value will be x(Remember that since semaphore is already created then value argument in sem_open is ignored).
-- Run program
+- Run program [namedSem.cpp](namedSem.cpp)
+    - When you run program first time you should be able to lock the semaphore. 
+    - When you run the program second time you will not be able to lock the semaphore. This is because semaphore value is saved.
+    - Note that it's obvious behavior because named semaphore has nothing to do a process. 
+    
+  ** A Trick to Handle Initial Value**:
