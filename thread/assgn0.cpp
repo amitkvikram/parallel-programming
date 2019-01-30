@@ -119,7 +119,7 @@ int main(){
     // sem_trywait(mutex1);
     // sem_post(mutex1);
     /*-----------------*/
-    srand (time(NULL));
+    srand (time(0));
 
     signal(SIGTERM, handle_sigterm);
     signal(SIGINT, handle_sigterm);
