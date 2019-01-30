@@ -40,18 +40,19 @@
     - Note that it's obvious behavior because named semaphore has nothing to do a process. 
     
   **A Trick to Handle Initial Value**: 
-  - Suppose in your program you want your semaphore to be initialized with initial value SEM_INITAL_VALUE. You don't want to worry about whether other process succesfully unlinked semaphore or not.
+  - Suppose in your program you want your semaphore to be initialized with initial value SEM_INITIAL_VALUE. You don't want to worry about whether other process succesfully unlinked semaphore or not.
   - Refer [namedSemWithInit.cpp](namedSemWithInit.cpp). 
     Flow of program is:
         - Open semaphore.
         - Keep on executing sem_trywait() until it returns -1. sem_trywait returns -1 when semaphore value is 0.
         - Now call sem_post for SEM_INITIAL_VALUE, this will increment value of semaphore to SEM_INITAL_VALUE.
+        
         - Code snippet:
     ```
     //Decrease the value of semaphore to 0
     while(sem_trywait(sem_mtx) != -1){
     }
-    //increase the value of semaphor to SEM_INTIAL_VAL
+    //increase the value of semaphore to SEM_INTIAL_VAL
     for(int i = 0; i < SEM_INITIAL_VAL; i++){
         sem_post(sem_mtx);
     }
