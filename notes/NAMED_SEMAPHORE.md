@@ -39,7 +39,7 @@
     - When you run the program second time you will not be able to lock the semaphore. This is because semaphore value is saved.
     - Note that it's obvious behavior because named semaphore has nothing to do a process. 
     
-  **A Trick to Handle Initial Value**: 
+ **A Trick to Handle Initial Value**: 
   - Suppose in your program you want your semaphore to be initialized with initial value SEM_INITIAL_VALUE. You don't want to worry about whether other process succesfully unlinked semaphore or not.
   - Refer [namedSemWithInit.cpp](namedSemWithInit.cpp). 
     Flow of program is:
