@@ -5,10 +5,10 @@
 
 using namespace std; 
 
-long trackLength = 1e9;
+long trackLength = 1e10;
 long hareTime = 0, turtoiseTime = 0;
 long hareDist = 0, turtoiseDist = 0;
-long hareStep = 3, turtoiseStep = 1;
+long hareStep = 3, turtoiseStep = 2;
 
 pthread_mutex_t terminalMutex = PTHREAD_MUTEX_INITIALIZER;   //Mutex for terminal ownership
 
@@ -18,13 +18,18 @@ void *hareFunction( void *argc ){
 
     while( hareDist < trackLength ){
         hareTime++;
-        if( hareDist > turtoiseDist + ( rand() % 10 + 20 ) && sleepTime == 0){
+        if( hareDist > turtoiseDist + ( rand() % 10 + 200000000 ) && sleepTime == 0){
             cout<<"Sleeping\n";
-            sleepTime = rand() % 30 + 100000;
+            sleepTime = rand() % 30 + 100000000;
         }
 
         if(sleepTime == 0) hareDist+=hareStep;
         else sleepTime--;
+
+        //Sleep Thread with 0.1 probability
+        // if(rand () % 100 < 10){
+        //     usleep(100);
+        // }
     }
 
     pthread_exit( (void *) 0 );
@@ -34,6 +39,11 @@ void *turtoiseFunction( void *argc ){
     while( turtoiseDist < trackLength ){
         turtoiseDist+=turtoiseStep;
         turtoiseTime++;
+
+        //Sleep Thread with 0.1 probability
+        // if(rand() % 100 < 10){
+        //     usleep(100);
+        // }
     }
 
     pthread_exit( (void*) 0 );
@@ -41,10 +51,10 @@ void *turtoiseFunction( void *argc ){
 
 void *reporterFunction( void *argc ){
     while( turtoiseDist < trackLength || hareDist < trackLength ){
-        pthread_mutex_lock(&terminalMutex);
-        cout<<"\n---------------\n";
-        cout<<"Hare Position: "<<hareDist<<endl<<"Turtoise Position: "<<turtoiseDist<<endl;
-        pthread_mutex_unlock(&terminalMutex);
+        // pthread_mutex_lock(&terminalMutex);
+        // cout<<"\n---------------\n";
+        // cout<<"Hare Position: "<<hareDist<<endl<<"Turtoise Position: "<<turtoiseDist<<endl;
+        // pthread_mutex_unlock(&terminalMutex);
     }
 
     pthread_exit( (void*) 0 );
