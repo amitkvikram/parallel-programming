@@ -1,4 +1,4 @@
-#### Named Semaphore
+## Named Semaphore
 
 1. [sem_open](http://man7.org/linux/man-pages/man3/sem_open.3.html):  
     ```
