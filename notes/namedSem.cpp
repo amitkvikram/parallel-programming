@@ -27,13 +27,7 @@ int main(){
 	else{
 		cout<<"Successfully locked semaphore"<<endl;
 	}
-	
-	char x;
-	while(!(cin>>x)){
-	
-	}
-	
-	sem_unlink(sem_name);
+
 	return 0;	
 }
 	
