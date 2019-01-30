@@ -2,7 +2,7 @@
 
 **Interface:**
 - Every thread has a thread id. A thread id is represented by pthread_t datatype.
-- To compare tow thread id, pthread_equal function is used.
+- To compare two thread id, pthread_equal function is used.
   ```
   int pthread_equal( pthread_t tidp1, pthread_t tidp2)
   ```
@@ -17,8 +17,8 @@
   Return 0 if OK, error number on failure.
 
 **Thread Termination:**
-- If any thread withing the process call exit, \_Exit or \_exit 0R main thred calls return then entire **process** terminaties.
-- Similarly when default action is to terminate the process, a signal setn to a thread will terminate the entire process.
+- If any thread within the process calls exit, \_Exit or \_exit 0R main thread calls return then entire **process** terminaties.
+- Similarly when default action is to terminate the process, a signal sent to a thread will terminate the entire process.
 - A single thread can exist in three ways:
   - The thread can simply return from the statrt routine. The return value is thread's exit code.
   - The thread can be canceled by another thread in *same process*.
@@ -39,7 +39,7 @@
 int pthread_join( pthread_t thread, void **rval_ptr)
 ```
   - pthread_join is blocking call and blocks the calling thread until target thread exits.
-  - If the thread has already terminated then pthrea_join returns immediately. Calling pthread_join for a terminated thread release system resource of thread. 
+  - If the thread has already terminated then pthread_join returns immediately. Calling pthread_join for a terminated thread release system resource of thread. 
   - Calling pthred_join will aoutomatically place the thread with which we're joining in detach mode.
 
 **Detach Thread**:
