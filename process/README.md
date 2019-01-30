@@ -33,9 +33,9 @@ God Process:
      
  #### Challenges
  1. ##### Reporter should print current position:
-    * After turtoise and hare both have taken one step, hare writes position of both of the in pipe hareToReporter. But reporter will not get scheduled after each step hence wehen reporter is scheduled there are many positions in the pipe hareToReporter. Reporter should print the most recent data. Since pipe is a FIFO(conceptually) hence reporter will have to read and throw data from pipe until only one data is left in the pipe and then print the last data to terminal.
+    * After turtoise and hare both have taken one step, hare writes position of both of them in pipe hareToReporter. But reporter will not get scheduled after each step hence wehen reporter is scheduled there are many positions in the pipe hareToReporter. Reporter should print the most recent data. Since pipe is a FIFO(conceptually) hence reporter will have to read and throw data from pipe until only one data is left in the pipe and then print the last data to terminal.
     * To acheive this reading from pipe hareToReporter is set to be non blocking. Reporter keeps on reading from pipe until there is no data and then prints the last available data.
    
 2. ##### Named semaphore should be handled properly:
     * Kernel doesn't explicitly removes named semaphore. However if sem_unlink() is called then semaphore is destoyed if there is no open reference to the semaphore and if there are open references to the semaphore then it will be destroyed when all the open references are closed. Open refrences are closed by calling sem_close and also OS will  explicitly close it when process exits.
-    * 
+    * Create a signal handler for SIGTERM and SIGINT and call sem_unlink() in the handler. This will unlink() the semaphore when there there is an interrupt(ctrl-c) or user terminates(kill -9 pid) the process by sending SIGTERM signal.
