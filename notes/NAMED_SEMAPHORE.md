@@ -45,7 +45,7 @@
     Flow of program is:
     - Open semaphore.
     - Keep on executing sem_trywait() until it returns -1. sem_trywait returns -1 when semaphore value is 0.
-    - Now call sem_post for SEM_INITIAL_VAL, this will increment value of semaphore to SEM_INITAL_VAL.
+    - Now call sem_post for SEM_INITIAL_VAL, this will increment value of semaphore to SEM_INITIAL_VAL.
     ```
     //Decrease the value of semaphore to 0
     while(sem_trywait(sem_mtx) != -1){
