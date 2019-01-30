@@ -23,4 +23,11 @@
     - Removes the named semaphore. 
  
  **Destory Semaphore**:
-  1. sem_close closes the open reference. However when process exits all the open references are automatically closed.
+  1. sem_close: closes the open reference. However when process exits all the open references are automatically closed.
+  2. sem_unlink(): removes the semaphore name immediately. Semaphore is destroyed immediately if there are no open reference to the semaphore. If there are open references when sem_unlink is called then sempahore is destroyed once all references are closed(remember that you don't have to call sem_unlik again).
+  3. So For semaphore to be destroyed sem_unlink must be called once before process exits.
+  
+  **Life Scope of Semaphore**:
+- if *sem_unlink* is not called explicitly then semaphore exists untill system reboots.
+- Semaphore value is saved across processes. So if you create a semaphore and when you exit from process semaphore value is x then next time you open semaphore anywhere its initial value will be x(Remember that since semaphore is already created then value argument in sem_open is ignored).
+- Run program
