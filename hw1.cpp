@@ -9,26 +9,29 @@ using namespace std;
 float sum1 = 0, sum2 = 0;
 
 typedef struct{
-    int START;
-    int END;
+    long long START;
+    long long END;
     float SUM;
 } threadData;
 
 void *func1(void *threadArgc){
     threadData *myData = (threadData *) threadArgc;
-    for(int i = myData -> START; i < myData -> END; i++){
+    // cout<<myData->START<<" "<< myData->END<<endl;
+    for(long long i = myData -> START; i < myData -> END; i++){
         myData -> SUM += ((i % 2)?-1.0:1.0)/(2*i + 1);
     }
-    pthread_exit(0);
+    pthread_exit((void*) 0);
 }
 
 int main(){
-    long numThread = 2, n = 4e9;
+    long long numThread = 2, n = 4e9;
     pthread_t tid[numThread];
     threadData tdData[numThread];
 
-    for(int i = 0; i < numThread; i++){
+    for(long long i = 0; i < numThread; i++){
         tdData[i].START = i * (n/numThread);
+        tdData[i].END = (i + 1) * ( n/numThread );
+        cout<<tdData[i].START<<" "<<tdData[i].END<<endl;
         tdData[i].SUM = 0;
     }
 
@@ -37,7 +40,7 @@ int main(){
         pthread_create(&tid[i], NULL, func1, (void *)&tdData[i]);
     }
  
-    /*Block Main Thred*/
+    /*Block Main Thread*/
     for(int i = 0; i < numThread; i++){
         pthread_join(tid[i], NULL);
     }
