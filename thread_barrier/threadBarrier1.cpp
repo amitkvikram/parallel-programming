@@ -20,23 +20,20 @@ ll counter = 0;    //Number of thread which reached the barrier point
 char sem_barrier[] = "/barrierSemaphore", sem_count[] = "/countSemaphore", sem_terminal[] = "/semTerm";
 sem_t *semBarrier, *semCount, *semTerm;
 
-unordered_map<ll, ll> id_map;
-
 void * func1(void * argc){
     ll id = *(ll*)argc;
     for(int i = 0; i < 10000000; i++){}
     sem_wait(semTerm);
+    cout<<id<<": "<<"Barrier Starts\n";
     sem_post(semTerm);
     sem_wait(semCount);
     counter += 1;
     if(counter != numThread){
         sem_post(semCount);
-        cout<<id<<": "<<"Barrier Starts\n";
         sem_wait(semBarrier);
     }
     else{
         sem_post(semCount);
-        cout<<id<<": "<<"Barrier Starts\n";
         for(int i = 0; i < numThread - 1; i++){
             sem_post(semBarrier);
         }
@@ -71,7 +68,7 @@ int main(){
     //Create Threads
     for(ll i = 0; i < numThread; i++){
         threadInd[i] = i + 1;
-        createThread(&tid[i], func1, threadInd[i]);
+        createThread( &tid[i], func1, threadInd[i] );
     }
 
     //Join Threads
