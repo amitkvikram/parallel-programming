@@ -21,7 +21,8 @@
     ```
     
     - Removes the named semaphore. 
- 
+    
+- A named semaphore is identified by it's name. Two or more processes can operate on the same named semaphore by passing the same name to sem_open
  
  **Destory Semaphore**:
  
