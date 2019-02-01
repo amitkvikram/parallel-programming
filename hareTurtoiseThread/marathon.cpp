@@ -51,10 +51,10 @@ void *turtoiseFunction( void *argc ){
 
 void *reporterFunction( void *argc ){
     while( turtoiseDist < trackLength || hareDist < trackLength ){
-        // pthread_mutex_lock(&terminalMutex);
-        // cout<<"\n---------------\n";
-        // cout<<"Hare Position: "<<hareDist<<endl<<"Turtoise Position: "<<turtoiseDist<<endl;
-        // pthread_mutex_unlock(&terminalMutex);
+        pthread_mutex_lock(&terminalMutex);
+        cout<<"\n---------------\n";
+        cout<<"Hare Position: "<<hareDist<<endl<<"Turtoise Position: "<<turtoiseDist<<endl;
+        pthread_mutex_unlock(&terminalMutex);
     }
 
     pthread_exit( (void*) 0 );
