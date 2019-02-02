@@ -24,7 +24,7 @@ vector<sem_t> sem;
 
 void exiting(){
     for(int i = 0; i < numThreads; i++){
-        sem_destroy(&sem[i]);
+        sem_destroy(&sem[i]);    //no need of doing it explicitly.
     }
 }
 
@@ -38,8 +38,8 @@ void *func( void * argc){
     sem_post( &sem[index] );
 }
 
-void createThread(pthread_t &tid, void *(*funcptr)(void *), int &index){
-    if(pthread_create( &tid, NULL, funcptr, (void *) &index) != 0){
+void createThread(pthread_t &tid, void *(*funcptr)(void *), void *index){
+    if(pthread_create( &tid, NULL, funcptr, index) != 0){
         cout<<"Error in thread creation\n";
         exit(EXIT_FAILURE);
     }
@@ -64,7 +64,7 @@ int main(){
     //Create thread
     for(int i = 0; i < numThreads; i++){
         threadInd[i] = i;
-        createThread(tid[i], func, threadInd[i]);
+        createThread(tid[i], func, (void *)&threadInd[i]);
     }   
 
     //Join Thread
