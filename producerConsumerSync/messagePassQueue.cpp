@@ -35,7 +35,7 @@ void *func1(void *argc){
         string msg = info + ": Message" + to_string(i) + "\n";
         Message[dest].push(msg);
 
-        
+        w
     }
 }
 
