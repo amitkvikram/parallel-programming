@@ -10,8 +10,9 @@ pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER; //Mutex for terminal ownership
 
 void *func1(void *){
 	while(true){
-		pthread_mutex_lock(&mtx);\
-		while( i< 10000)
+		pthread_mutex_lock(&mtx);
+		int i = 0;
+		while( i< 100000000)
 		i++;
 		printf("thread1\n");
 		pthread_mutex_unlock(&mtx);
@@ -22,7 +23,7 @@ void *func2(void *){
 	while(true){
 		pthread_mutex_lock(&mtx);
 		int i = 0; 
-		while( i< 10000)
+		while( i< 100000000)
 		i++;
 		printf("thread2\n");
 		pthread_mutex_unlock(&mtx);
