@@ -3,7 +3,6 @@
                     thread wants to send message to destination it enqueues in the destination thread's queue.
 
     Library Used: Unnamed semaphore, std::queue.
-    Solution: For mutual exclusion we do busy waiting with the help of semaphore
  */
 
 #include<bits/stdc++.h>
@@ -12,27 +11,42 @@
 
 using namespace std;
 
-int numThreads = 7;
+int numThreads = 4;
 vector<queue<string>> Message;
 
 //Terminal semaphore to avoid intermixing of output of two or more threads
 //countSem semaphore to increment the couter
 sem_t terminalSem, countSem;
-
-//There is possibility of deadlock in the case when
-//thread x sends message to thread y and thread y sends message to thread x
+//Semaphore for each queue
 vector<sem_t> queueSem;
-
 int counter = 0;   //keeps track of number of threads which have finished sending messages
+
+//Barrier semaphore
+sem_t barrierSem, barrierCountSem;
+int barrierCount = 0;
 
 void *func1(void *argc){
     int src = *(int *)argc;
-    int numMessages = max(2, rand() % 20);
+    int numMessages = max(2, rand() % 6);
 
     sem_wait(&terminalSem);
     cout<<("Thread" + to_string(src) + " sends "+ to_string(numMessages) + " messages\n");
     sem_post(&terminalSem);
+
     /* --------Barrier-------------*/
+    sem_wait(&barrierCountSem);
+    barrierCount++;
+    if(barrierCount == numThreads){
+        barrierCount = 0;
+        sem_post(&barrierCountSem);
+        for(int i = 0; i < numThreads - 1; i++){
+            sem_post(&barrierSem);
+        }
+    }
+    else{
+        sem_post(&barrierCountSem);
+        sem_wait(&barrierSem);
+    }
     /*-----------------------------*/
 
     for(int i = 0; i < numMessages; i++){ 
@@ -43,12 +57,13 @@ void *func1(void *argc){
         //Send Message
         string info = "Thread"+to_string(src) + "--> Thread"+ to_string(dest);
         string msg = info + ": Message" + to_string(i);
-        while( sem_trywait(&queueSem[dest]) != 0 ){}    //Busy Wait
+
+        sem_wait(&queueSem[dest]);
         Message[dest].push(msg);
         sem_post(&queueSem[dest]);
 
         //Receive Message if any
-        while( sem_trywait(&queueSem[src]) != 0 ){}    //Busy Wait
+        sem_wait(&queueSem[src]);
         if( !Message[src].empty() ){
             msg = Message[src].front();
             Message[src].pop();
@@ -58,33 +73,26 @@ void *func1(void *argc){
         }
         sem_post(&queueSem[src]);
     }
-
+    sem_wait(&countSem);
+    counter++;
+    sem_post(&countSem);
     //Wait until other threads have finished sending messages
     //and keep receiving messages if any
     while(true){
-        sem_wait(&countSem);
-        if(counter == 6){
-            sem_post(&countSem);
+        if(counter == numThreads && Message[src].empty()){
             break;
         }
-        sem_post(&countSem);
 
         //Receive message if any
         sem_wait(&queueSem[src]);
         if( !Message[src].empty()){
             string msg = Message[src].front();
             Message[src].pop();
+            sem_wait(&terminalSem);
+            cout<<msg<<endl;
+            sem_post(&terminalSem);
         }
         sem_post(&queueSem[src]);
-    }
-
-    //Receive all the messges in the source queue
-    while(!Message[src].empty()){
-        string msg = Message[src].front();
-        Message[src].pop();
-        sem_wait(&terminalSem);
-        cout<<msg<<endl;
-        sem_post(&terminalSem);
     }
 }
 
@@ -101,11 +109,17 @@ int main(){
     Message.resize(numThreads);
     queueSem.resize(numThreads);
 
+    //seed 
+    srand(time(0));
+
     //Initialize unnamed semaphores
     sem_init(&terminalSem, 0, 1);
     for(int i = 0; i < numThreads; i++){
         sem_init(&queueSem[i], 0, 1);;
     }
+    sem_init(&countSem, 0, 1);
+    sem_init(&barrierSem, 0, 0);
+    sem_init(&barrierCountSem, 0, 1);
 
     //Create Threads
     for(int i = 0; i < numThreads; i++){
