@@ -1,4 +1,4 @@
-### Task: Simulate Hare and turtoise race using processes.
+### Task: Simulate Hare and Tortoise race using processes.
 
 - There will be four processes named Hare, Turtoise, God and Reporter
 - There is one master process which will fork all the four processes.
@@ -29,11 +29,11 @@ God Process:
        - gotToTurotise: God is writer and Turtoise is reader. God writes position where it wants to reposition the turtoise(by reading values from terminal), if god doesn't want to reposition turtoise it writes -1 in the pipe. Turtoise waits for reading the data from this pipe in blocking mode.
        - godToHare: God is writer and Hare is reader. God writes position where it wants to reposition the hare(by reading values form terminal), if god doesn't want to repostion hare it writes -1 in the pipe.
        - hareToReporter: Hare is wirter and Reporter is reader. Hare process writes position of both Hare and Turtoise in this pipe. Reporter reads from this in **non blocking mode** and after reading prints on terminal.
-       - hareToMaster: Hare is writer and Master is reader. After forking all the processes hare reads from this pipe in blocking mode. When race is finished hare writes time taken by hare and turtoese to this pipe. After reading from this pipe master decides which is winner.
+       - hareToMaster: Hare is writer and Master is reader. After forking all the processes hare reads from this pipe in blocking mode. When race is finished hare writes time taken by hare and tortoise to this pipe. After reading from this pipe master decides which is winner.
      
  #### Challenges
  1. ##### Reporter should print current position:
-    * After turtoise and hare both have taken one step, hare writes position of both of them in pipe hareToReporter. But reporter will not get scheduled after each step hence wehen reporter is scheduled there are many positions in the pipe hareToReporter. Reporter should print the most recent data. Since pipe is a FIFO(conceptually) hence reporter will have to read and throw data from pipe until only one data is left in the pipe and then print the last data to terminal.
+    * After tortoise and hare both have taken one step, hare writes position of both of them in pipe hareToReporter. But reporter will not get scheduled after each step hence wehen reporter is scheduled there are many positions in the pipe hareToReporter. Reporter should print the most recent data. Since pipe is a FIFO(conceptually) hence reporter will have to read and throw data from pipe until only one data is left in the pipe and then print the last data to terminal.
     * To acheive this reading from pipe hareToReporter is set to be non blocking. Reporter keeps on reading from pipe until there is no data and then prints the last available data.
    
 2. ##### Named semaphore should be handled properly:
