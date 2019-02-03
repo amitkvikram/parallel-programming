@@ -31,7 +31,7 @@ void exiting(){
 void *func( void * argc){
     int index = *(int *)argc;
     Messages[(index + 1)%numThreads] = new string("Thread" + to_string(index) + " to Thread" 
-                                + to_string((index + 1) % numThreads) + "\n");
+                                + to_string((index + 1) % numThreads) + " HELLO\n");
     sem_post( &sem[(index + 1)%numThreads]);
     sem_wait( &sem[index] );
     cout<<*(Messages[index]);
