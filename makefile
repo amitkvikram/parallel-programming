@@ -1,8 +1,8 @@
 all: thread.out	
 
-thread.out: hw1.cpp
-	g++ -pthread hw1.cpp -o thread.out
+thread.out: temp.cpp
+	g++ -pthread temp.cpp -o temp.out
 
-clean
+clean : *.out 
 	rm */*.out
 	rm *.out

@@ -12,7 +12,7 @@
 using namespace std;
 
 int numThreads = 4;
-vector<queue<string>> Message;
+vector<queue<string>> MessageQueue;
 
 //Terminal semaphore to avoid intermixing of output of two or more threads
 //countSem semaphore to increment the couter
@@ -59,14 +59,14 @@ void *func1(void *argc){
         string msg = info + ": Message" + to_string(i);
 
         sem_wait(&queueSem[dest]);
-        Message[dest].push(msg);
+        MessageQueue[dest].push(msg);
         sem_post(&queueSem[dest]);
 
         //Receive Message if any
         sem_wait(&queueSem[src]);
-        if( !Message[src].empty() ){
-            msg = Message[src].front();
-            Message[src].pop();
+        if( !MessageQueue[src].empty() ){
+            msg = MessageQueue[src].front();
+            MessageQueue[src].pop();
             sem_wait(&terminalSem);
             cout<<msg<<endl;
             sem_post(&terminalSem);
@@ -79,15 +79,15 @@ void *func1(void *argc){
     //Wait until other threads have finished sending messages
     //and keep receiving messages if any
     while(true){
-        if(counter == numThreads && Message[src].empty()){
+        if(counter == numThreads && MessageQueue[src].empty()){
             break;
         }
 
         //Receive message if any
         sem_wait(&queueSem[src]);
-        if( !Message[src].empty()){
-            string msg = Message[src].front();
-            Message[src].pop();
+        if( !MessageQueue[src].empty()){
+            string msg = MessageQueue[src].front();
+            MessageQueue[src].pop();
             sem_wait(&terminalSem);
             cout<<msg<<endl;
             sem_post(&terminalSem);
@@ -106,7 +106,7 @@ void createThread(pthread_t &tid, void *(*funcptr)(void *), void *index){
 int main(){
     pthread_t tid[numThreads];
     int threadInd[numThreads];
-    Message.resize(numThreads);
+    MessageQueue.resize(numThreads);
     queueSem.resize(numThreads);
 
     //seed 

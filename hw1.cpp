@@ -24,7 +24,7 @@ void *func1(void *threadArgc){
 }
 
 int main(){
-    long long numThread = 2, n = 4e9;
+    long long numThread = 1, n = 4e9;
     pthread_t tid[numThread];
     threadData tdData[numThread];
 

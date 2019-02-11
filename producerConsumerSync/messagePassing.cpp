@@ -19,7 +19,7 @@ using namespace std;
 typedef long long ll;
 
 int numThreads = 6;
-vector<string*> Messages;
+vector<string*> MessageQueue;
 vector<sem_t> sem;
 
 void exiting(){
@@ -30,11 +30,11 @@ void exiting(){
 
 void *func( void * argc){
     int index = *(int *)argc;
-    Messages[(index + 1)%numThreads] = new string("Thread" + to_string(index) + " to Thread" 
+    MessageQueue[(index + 1)%numThreads] = new string("Thread" + to_string(index) + " to Thread" 
                                 + to_string((index + 1) % numThreads) + " HELLO\n");
     sem_post( &sem[(index + 1)%numThreads]);
     sem_wait( &sem[index] );
-    cout<<*(Messages[index]);
+    cout<<*(MessageQueue[index]);
     sem_post( &sem[index] );
 }
 
@@ -48,11 +48,11 @@ void createThread(pthread_t &tid, void *(*funcptr)(void *), void *index){
 int main(){
     pthread_t tid[numThreads];
     int threadInd[numThreads];
-    Messages.resize(numThreads);
+    MessageQueue.resize(numThreads);
 
     //In beginnig each message pointer is set to null
     for(int i = 0; i < numThreads; i++){
-        Messages[i] = nullptr;
+        MessageQueue[i] = nullptr;
     }
 
     //Initialize Semaphore
