@@ -5,63 +5,110 @@
 
 using namespace std; 
 
-long trackLength = 1e10;
+typedef struct{
+    bool update;
+    int hareDist;
+    int turtoiseDist;
+} updateData;
+
+updateData newVal;
+long const trackLength = 1e8;
 long hareTime = 0, turtoiseTime = 0;
 long hareDist = 0, turtoiseDist = 0;
-long hareStep = 3, turtoiseStep = 2;
+long const hareStep = 3, turtoiseStep = 1;
 
-pthread_mutex_t terminalMutex = PTHREAD_MUTEX_INITIALIZER;   //Mutex for terminal ownership
+long const minIntervalRequired = 100000;
+long const minHareSleeps = 1000;
 
+pthread_mutex_t hareDistMtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t turtoiseDistMtx = PTHREAD_MUTEX_INITIALIZER;
+
+
+//Input to god 
+void getNewVal(){
+    newVal = {false, -1, -1};
+    if(rand() % 10 >=8){    //update with probability 0.2
+        newVal.update = true;
+        newVal.hareDist = rand() % int(trackLength);
+        newVal.turtoiseDist = rand() % int(trackLength);
+    }
+}
 
 void *hareFunction( void *argc ){
     long sleepTime = 0;
 
-    while( hareDist < trackLength ){
-        hareTime++;
-        if( hareDist > turtoiseDist + ( rand() % 10 + 200000000 ) && sleepTime == 0){
-            cout<<"Sleeping\n";
-            sleepTime = rand() % 30 + 100000000;
+    while( true ){
+        if(sleepTime == 0){
+            pthread_mutex_lock(&hareDistMtx);
+            pthread_mutex_lock(&turtoiseDistMtx);
+            if (hareDist >= trackLength){
+                pthread_mutex_unlock(&turtoiseDistMtx);
+                pthread_mutex_unlock(&hareDistMtx);
+                break;
+            }
+            if( hareDist > turtoiseDist + ( rand() % 10 + minIntervalRequired)){
+                sleepTime = rand() % minHareSleeps;
+            }
+            else{
+                hareDist+=hareStep;
+            }
+            pthread_mutex_unlock(&turtoiseDistMtx);
+            pthread_mutex_unlock(&hareDistMtx);
         }
-
-        if(sleepTime == 0) hareDist+=hareStep;
-        else sleepTime--;
-
-        //Sleep Thread with 0.1 probability
-        // if(rand () % 100 < 10){
-        //     usleep(100);
-        // }
+        else {
+            sleepTime--;
+        }
+        hareTime++;
     }
 
-    pthread_exit( (void *) 0 );
+    pthread_exit( (void  *) 0 );
 }
 
 void *turtoiseFunction( void *argc ){
-    while( turtoiseDist < trackLength ){
+    while( true ){
+        pthread_mutex_lock(&turtoiseDistMtx);
+        if(turtoiseDist >= trackLength){
+            pthread_mutex_unlock(&turtoiseDistMtx);
+            break;
+        }
         turtoiseDist+=turtoiseStep;
+        pthread_mutex_unlock(&turtoiseDistMtx);
         turtoiseTime++;
-
-        //Sleep Thread with 0.1 probability
-        // if(rand() % 100 < 10){
-        //     usleep(100);
-        // }
     }
 
     pthread_exit( (void*) 0 );
 }
 
 void *reporterFunction( void *argc ){
-    while( turtoiseDist < trackLength || hareDist < trackLength ){
-        pthread_mutex_lock(&terminalMutex);
+    while( true ){
+        if( turtoiseDist >= trackLength && hareDist >= trackLength ){
+            break;
+        }
         cout<<"\n---------------\n";
         cout<<"Hare Position: "<<hareDist<<endl<<"Turtoise Position: "<<turtoiseDist<<endl;
-        pthread_mutex_unlock(&terminalMutex);
     }
 
     pthread_exit( (void*) 0 );
 }
 
 void *godFunction( void *argc ){
-
+    while(true){
+        getNewVal();
+        pthread_mutex_lock(&hareDistMtx);
+        pthread_mutex_lock(&turtoiseDistMtx);
+        if( turtoiseDist >= trackLength && hareDist >= trackLength ){
+            pthread_mutex_unlock(&turtoiseDistMtx);
+            pthread_mutex_unlock(&hareDistMtx);
+            break;
+        }
+        if(newVal.update){
+            if(hareDist < trackLength) hareDist = newVal.hareDist;
+            if(turtoiseDist < trackLength) turtoiseDist = newVal.turtoiseDist;
+        }
+        pthread_mutex_unlock(&turtoiseDistMtx);
+        pthread_mutex_unlock(&hareDistMtx);
+        usleep(500);
+    }
 }
 
 int createThread(pthread_t &tidp, void *(*fun_ptr)(void *)){
@@ -78,7 +125,7 @@ int main(){
 
     srand (time(0));
 
-    /*Reference for information*/
+    /*Reference for information purpose only*/
     pthread_t &hareThread = tidp[0], &turtoiseThread = tidp[1], 
                 &reporterThread = tidp[2], &godThread = tidp[3];
 
