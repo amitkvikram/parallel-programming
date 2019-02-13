@@ -13,11 +13,11 @@ However among thes five shared variable only two harDist and turtoiseDist are sh
 
 **Fuction Description**:
 1. hareFunction: Simulates running of hare. It proceeds in following order.
-    1. If hare is sleeping update time of hare and **continue**.
-    2. Check if hare is far ahead of turtoise.
-    3. If hare is far ahead of turtoise sleep for random number of iteration.
-    4. Else update position of hare.
-    5. Update time of hare.
+    - If hare is sleeping update time of hare and **continue**.
+    - Check if hare is far ahead of turtoise.
+    - If hare is far ahead of turtoise sleep for random number of iteration.
+    - Else update position of hare.
+    - Update time of hare.
 
 2. turtoiseFunction: Simulates running of turtoise. it updates poistion and time of turtoise.
 3. reporterFunction: Prints position of hare and turtoise on terminal.
@@ -35,7 +35,7 @@ However among thes five shared variable only two harDist and turtoiseDist are sh
 2. Hare needs to have access to its own distance and turtoise distance both because it sleeps if it is far ahead of turtoise. Hare function proceeds in following order.
     - Lock hareDistMtx and turtoiseDistMtx in order.
     - Either updated hareDist or decides to sleep.
-    - Unlock turtoiseDistMtx and hareDistMtx in order.
+    - Unlock turtoiseDistMtx and hareDistMtx.
 3. As Discussed we don't worry about mutual exclusion when reporter access the shared variables.
 4. God needs to update both hareDist and turtoiseDist depending on the input. God function proceeds in following order. 
     - Lock hareDistMtx and turtoiseDistMtx in order.
