@@ -12,7 +12,7 @@ typedef struct{
 } updateData;
 
 updateData newVal;
-long const trackLength = 1e8;
+long const trackLength = 1e9;
 long hareTime = 0, turtoiseTime = 0;
 long hareDist = 0, turtoiseDist = 0;
 long const hareStep = 3, turtoiseStep = 1;
@@ -29,8 +29,8 @@ void getNewVal(){
     newVal = {false, -1, -1};
     if(rand() % 10 >=8){    //update with probability 0.2
         newVal.update = true;
-        newVal.hareDist = rand() % int(trackLength);
-        newVal.turtoiseDist = rand() % int(trackLength);
+        newVal.hareDist = rand() % (trackLength);
+        newVal.turtoiseDist = rand() % (trackLength);
     }
 }
 
