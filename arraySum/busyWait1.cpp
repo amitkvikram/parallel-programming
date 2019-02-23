@@ -15,12 +15,14 @@ typedef struct{
 
 void *threadSum(void *argc){
     ThreadData myData = *(ThreadData *)argc;
+    long long mySum = 0;
     for(int i = myData.myStart_i; i < myData.myEnd_i; i++){
-        while(threadTurnFlag != myData.myRank);
-        g_sum += ((i % 2)?-1.0:1.0)/(2*i + 1);
-        threadTurnFlag = (threadTurnFlag + 1) % threadCount;
+        mySum += i;
     }
 
+    while(threadTurnFlag != myData.myRank);
+    g_sum += mySum;
+    threadTurnFlag = (threadTurnFlag + 1) % threadCount;
     return NULL;
 }
 
