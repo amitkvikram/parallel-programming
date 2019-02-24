@@ -18,5 +18,5 @@ busyWait1.out: busyWait1.cpp
 sumUsingMutex1.out: sumUsingMutex1.cpp
 	g++ -pthread sumUsingMutex1.cpp -o sumUsingMutex1.out
 
-clean : *.out
-	rm *.out 
+clean :
+	rm -f *.out 
