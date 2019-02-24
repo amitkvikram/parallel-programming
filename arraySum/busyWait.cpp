@@ -17,7 +17,7 @@ void *threadSum(void *argc){
     ThreadData myData = *(ThreadData *)argc;
     for(int i = myData.myStart_i; i < myData.myEnd_i; i++){
         while(threadTurnFlag != myData.myRank);
-        g_sum += ((i % 2)?-1.0:1.0)/(2*i + 1);
+        g_sum += i;
         threadTurnFlag = (threadTurnFlag + 1) % threadCount;
     }
 
