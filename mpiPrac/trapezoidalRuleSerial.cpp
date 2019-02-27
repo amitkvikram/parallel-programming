@@ -6,7 +6,7 @@
 using namespace std;
 
 float f(float x){
-    return x*x;
+    return x*x + 4 + x*2;
 }
 
 int main(int argc, char *argv[]){
@@ -15,6 +15,7 @@ int main(int argc, char *argv[]){
 
     if(argc < 4){
         cout<<"Command Line Arguments not found";
+        exit(EXIT_FAILURE);
     }
     else{
         a = atof(argv[1]);
@@ -23,14 +24,14 @@ int main(int argc, char *argv[]){
     }
 
 
-    float h = (b - a)/n;
-    float approx = (f(a)+f(b))/2.0;
+    double h = (b - a)/n;
+    double approx = (f(a)+f(b))/2.0;
 
     for(int i = 1; i<n; i++){
-        float x_i = a + h*i;
+        double x_i = a + h*i;
         approx += f(x_i);
     }
 
     approx = approx * h;
-    printf("Area = %f\n",approx);
+    printf("Integral = %lf\n",approx);
 }
