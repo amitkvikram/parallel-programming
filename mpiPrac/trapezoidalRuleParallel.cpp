@@ -47,14 +47,13 @@ int main(int argc, char *argv[]){
     double localIntegral = getTrapezoidArea(localA, localB, localN, h);
     
     if(my_rank != 0){
-        MPI_Send(&localIntegral, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
-    }
+        MPI_Reduce(&localIntegral, NULL, 1, MPI_DOUBLE, MPI_SUM,
+                    0, MPI_COMM_WORLD);
+    }   
     else{
         double totalIntegral = localIntegral;
-        for(int i = 1; i < commSz; i++){
-            MPI_Recv(&localIntegral, 1, MPI_DOUBLE, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            totalIntegral += localIntegral;
-        }
+        MPI_Reduce(&localIntegral, &totalIntegral, 1, MPI_DOUBLE, MPI_SUM, 
+                    0, MPI_COMM_WORLD);
         printf("Integral = %lf\n", totalIntegral);
     }
 
