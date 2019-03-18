@@ -9,6 +9,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include "typeDefinition.h"
+#include <semaphore.h>
 
 using namespace std;
 
@@ -20,6 +21,19 @@ typedef vector<int> vi;
 
 #define HL_HIGHLIGHT_NUMBERS (1<<0)
 #define HL_HIGHLIGHT_STRINGS (1<<1)
+
+//Parallelize File Reading
+bool fileReading = false;
+bool canProceed = true;
+pthread_mutex_t RowMtx = PTHREAD_MUTEX_INITIALIZER;
+/***File Reading Parallelization***/
+
+/***Parallelize File Saving***/
+sem_t semFileSave;
+queue<dataToSave> dataToSaveQueue;
+pthread_t fileSavingThread;
+bool savingFile = false;
+/***File Saving Parallelization***/
 
 editorConfig E;
 const char *filename1 = "temp.txt";
@@ -95,11 +109,11 @@ void editorMoveCursor(int key) {
             }
             break;
         case ARROW_RIGHT:
-            fprintf(fp1, "%s: %d %d\n", 
-                        row->chars, row->size, E.cx);
+            // fprintf(fp1, "%s: %d %d\n", 
+            //             row->chars, row->size, E.cx);
             if(row && E.cx < row->size){
                 const char *temp = "rightArr";
-                fprintf(fp1, "%s: %d\n", temp, E.cy);
+                // fprintf(fp1, "%s: %d\n", temp, E.cy);
                 E.cx++;
             }else if(row && E.cx == row->size){
                 E.cy ++;
@@ -128,7 +142,7 @@ void editorMoveCursor(int key) {
 int editorRowCxToRx(erow *row, int cx){
     int rx = 0;
     int j;
-    fprintf(fp1, "cxTorx: %d\n", cx);
+    // fprintf(fp1, "cxTorx: %d\n", cx);
 
     for(j = 0; j < cx; j++){
         if(row->chars[j] == '\t'){
@@ -416,7 +430,7 @@ void editorSelectSyntaxHighlight() {
 }
 
 void editorUpdateRow(erow *row){
-    fprintf(fp1, "%s\n","UpdateRowCalled");
+    // fprintf(fp1, "%s\n","UpdateRowCalled");
     int tabs = 0;
     for(int j = 0; j < row->size; j++){
         if(row->chars[j] == '\t') tabs++;
@@ -443,11 +457,11 @@ void editorUpdateRow(erow *row){
 
     row->render[idx] = '\0';
     row->rsize = idx;
-    fprintf(fp1, "updRow: %s: %d\n", row->chars, row->rsize);
+    // fprintf(fp1, "updRow: %s: %d\n", row->chars, row->rsize);
     editorUpdateSyntax(row);
 }
 
-void editorInsertRow(int at, const char *s, size_t len){
+void editorInsertRow(int at, const char *s, size_t len, bool updateDirty){
     if (at < 0 || at > E.numrows) return;
     E.row = (erow *) realloc(E.row, sizeof(erow) * (E.numrows + 1));
     memmove(&E.row[at + 1], &E.row[at], sizeof(erow) * (E.numrows - at));
@@ -468,7 +482,7 @@ void editorInsertRow(int at, const char *s, size_t len){
     editorUpdateRow(&E.row[at]);
 
     E.numrows++;
-    E.dirty++;
+    if(updateDirty)E.dirty++;
 }
 
 void editorRowInsertChar(erow *row, int at, int c){
@@ -515,7 +529,12 @@ void editorRowDelChar(erow *row, int at) {
 void editorInsertChar(int c) {
   if (E.cy == E.numrows) {
     char temp[] = "";
-    editorInsertRow(E.numrows, temp, 0);
+    if(fileReading){
+        pthread_mutex_lock(&RowMtx);
+            editorInsertRow(E.numrows, temp, 0, true);
+        pthread_mutex_unlock(&RowMtx);
+    }
+    else editorInsertRow(E.numrows, temp, 0, true);
   }
   editorRowInsertChar(&E.row[E.cy], E.cx, c);
   E.cx++;
@@ -523,10 +542,20 @@ void editorInsertChar(int c) {
 
 void editorInsertNewline(){
     if(E.cx == 0){
-        editorInsertRow(E.cy, "", 0);
+        if(fileReading){
+            pthread_mutex_lock(&RowMtx);
+            editorInsertRow(E.cy, "", 0, true);
+            pthread_mutex_unlock(&RowMtx);
+        }
+        else editorInsertRow(E.cy, "", 0, true);
     }else{
         erow *row = &E.row[E.cy];
-        editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx);
+        if(fileReading){
+            pthread_mutex_lock(&RowMtx);
+            editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx, true);
+            pthread_mutex_unlock(&RowMtx);
+        }
+        else editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx, true);
         row = &E.row[E.cy];
         row->size = E.cx;
         row->chars[row->size] = '\0';
@@ -548,12 +577,16 @@ void editorDelChar() {
     }else{
         E.cx = E.row[E.cy - 1].size;
         editorRowAppendString(&E.row[E.cy - 1], row->chars, row->size);
+        pthread_mutex_lock(&RowMtx);
         editorDelRow(E.cy);
+        pthread_mutex_unlock(&RowMtx);
         E.cy--;
     }
 }
 
-void editorOpen(char *filename){
+void* editorOpen(void *argc){
+    char *filename = (char*)argc;
+    fprintf(fp1, "%s: %s\n", "opening file", filename);
     free(E.filename);
     E.filename = strdup(filename);
 
@@ -570,14 +603,62 @@ void editorOpen(char *filename){
                             line[linelen - 1] == '\r')){
                                 linelen --;
                             }
-        editorInsertRow(E.numrows, line, linelen);
+
+        pthread_mutex_lock(&RowMtx);
+        editorInsertRow(E.numrows, line, linelen, false);
+        if(E.numrows > 2000 && !canProceed){
+            editorRefreshScreen();
+            canProceed = true;
+        }
+        else if( E.numrows > 2000 && E.numrows % 500 == 0){
+            editorRefreshScreen();
+        }
+        pthread_mutex_unlock(&RowMtx);
     }
+
+    fileReading = false;
+    canProceed = true;
     free(line);
     fclose(fp);
-    E.dirty = 0;
+    // E.dirty = 0;
+    editorRefreshScreen();
+}
+
+void *editorSaveThread(void *argc){
+    while(true){
+        sem_wait(&semFileSave);
+        savingFile = true;
+        dataToSave data = dataToSaveQueue.front();
+        dataToSaveQueue.pop();
+        char *buf = data.buf;
+        int len = data.len;
+        int fd = open(E.filename, O_RDWR| O_CREAT, 0644);
+        bool success = false;
+        if (fd != -1) {
+            if (ftruncate(fd, len) != -1) {
+                if (write(fd, buf, len) == len) {
+                    close(fd);
+                    free(buf);
+                    editorSetStatusMessage("%d bytes written to disk", len);
+                    editorRefreshScreen();
+                    success = true;
+                }
+            }
+            close(fd);
+        }
+        if(!success){
+            free(buf);
+            editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
+        }
+        savingFile = false;
+    }
 }
 
 void editorSave(){
+    if(fileReading){
+        editorSetStatusMessage("File Reading...");
+        return;
+    }
     if (E.filename == NULL) {
         E.filename = editorPrompt("Save as: %s (ESC to cancel)", NULL);
         if(E.filename == NULL){
@@ -590,22 +671,10 @@ void editorSave(){
 
     int len;
     char *buf = editorRowsToString(&len);
-
-    int fd = open(E.filename, O_RDWR| O_CREAT, 0644);
-    if (fd != -1) {
-        if (ftruncate(fd, len) != -1) {
-            if (write(fd, buf, len) == len) {
-                close(fd);
-                free(buf);
-                E.dirty = 0;
-                editorSetStatusMessage("%d bytes written to disk", len);
-                return;
-            }
-        }
-        close(fd);
-    }
-    free(buf);
-    editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
+    dataToSaveQueue.push({buf, len});
+    sem_post(&semFileSave);
+    E.dirty = 0;
+    return;
 }
 
 void editorFindCallback(char *query, int key) {
@@ -684,12 +753,23 @@ void editorProcessKeypress() {
             editorInsertNewline();
             break;
         case CTRL_KEY('q'):
-            if (E.dirty && quit_times > 0) {
-                editorSetStatusMessage("WARNING!!! File has unsaved changes. "
-                "Press Ctrl-Q %d more times to quit.", quit_times);
-                quit_times--;
+            if (!fileReading && E.dirty && quit_times > 0) {
+                if(savingFile){
+                    editorSetStatusMessage("Please Wait, file saving in progress..");
+                    return;
+                }
+                else{
+                    editorSetStatusMessage("WARNING!!! File has unsaved changes. "
+                    "Press Ctrl-Q %d more times to quit.", quit_times);
+                    quit_times--;
+                    return;
+                }
+            }
+            else if(fileReading){
+                editorSetStatusMessage("Reading File..");
                 return;
             }
+
             write(STDOUT_FILENO, "\x1b[2J", 4);
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
@@ -709,7 +789,7 @@ void editorProcessKeypress() {
             break;
 
         case CTRL_KEY('f'):
-            editorFind();
+            if(!fileReading) editorFind();
             break;
 
         case BACKSPACE:
@@ -907,7 +987,7 @@ void editorRefreshScreen()
     editorDrawMessageBar(&ab);
 
     char buf[32];
-    fprintf(fp1, "\ncx rx = %d %d\n", E.cx, E.rx);
+    // fprintf(fp1, "\ncx rx = %d %d\n", E.cx, E.rx);
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", 
                 (E.cy - E.rowoff) + 1, 
                 (E.rx - E.coloff) + 1);
@@ -983,6 +1063,16 @@ void initEditor()
     E.screenrows -= 2;
 }
 
+int createThread(pthread_t &tidp, void *(*fun_ptr)(void *), void *argc){
+    if( pthread_create(&tidp, NULL, fun_ptr, argc) != 0 ){
+        // cout<<"Error in Creating Thread\n";
+        fprintf(fp1, "%s\n", "Error in creating thread");
+        exit(EXIT_FAILURE);
+    }
+    fprintf(fp1, "%s\n", "Thread Created\n");
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     enableRawMode();
@@ -990,17 +1080,28 @@ int main(int argc, char *argv[])
     E.row = NULL;
     E.numrows = 0;
     E.rowoff = 0;
+    pthread_t fileReadingThread;
     if (argc >= 2) {
-        editorOpen(argv[1]);
+        fileReading = true;
+        canProceed = false;
+        fprintf(fp1, "%s\n","creating thread");
+        createThread(fileReadingThread, editorOpen, (void*)(argv[1]));
     }
 
     editorSetStatusMessage(
             "HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find");
 
+    //Initialization for File Saving
+    sem_init(&semFileSave, 0, 0);
+    createThread(fileSavingThread, editorSaveThread, NULL);
+    
+    while(!canProceed){}
+    
     while (1)
-    {
+    {   
         editorRefreshScreen();
         editorProcessKeypress();
     }
+
     return 0;
 }
