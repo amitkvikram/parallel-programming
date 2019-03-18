@@ -1,0 +1,2737 @@
+Hello This is India.
+Hello This is America.
+Hello This is Japan.
+
+#include <bits/stdc++.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <termios.h>
+#include <fcntl.h>
+#include <string.h>
+#include <stdarg.h>
+#include <malloc.h>
+#include <time.h>
+#include <stdlib.h>
+#include "typeDefinition.h"
+
+using namespace std;
+
+typedef vector<int> vi;
+#define ABUF_INIT {NULL, 0}
+#define KILO_VERSION "0.0.1"
+#define KILO_TAB_STOP 8
+#define KILO_QUIT_TIMES 3
+
+#define HL_HIGHLIGHT_NUMBERS (1<<0)
+#define HL_HIGHLIGHT_STRINGS (1<<1)
+
+editorConfig E;
+const char *filename1 = "temp.txt";
+
+const char *C_HL_extensions[] = { ".c", ".h", ".cpp", NULL };
+const char *C_HL_keywords[] = {
+  "switch", "if", "while", "for", "break", "continue", "return", "else",
+  "struct", "union", "typedef", "static", "enum", "class", "case",
+  "int|", "long|", "double|", "float|", "char|", "unsigned|", "signed|",
+  "void|", NULL
+};
+
+editorSyntax HLDB[] = {
+  {
+    "c",
+    C_HL_extensions,
+    C_HL_keywords,
+    "//", "/*", "*/",
+    HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS
+  },
+};
+
+#define HLDB_ENTRIES (sizeof(HLDB) / sizeof(HLDB[0]))
+
+void editorSetStatusMessage(const char *fmt, ...);
+void editorRefreshScreen();
+char *editorPrompt(const char *prompt, void (*callback)(char *, int));
+
+FILE *fp1 = fopen(filename1, "w+");
+
+#define CTRL_KEY(k) ((k)&0x1f)
+
+char *editorRowsToString(int *buflen){
+    int totlen = 0;
+    int j;
+    for(j = 0; j < E.numrows; j++){
+        totlen += E.row[j].size + 1;
+    }
+    *buflen = totlen;
+
+    char *buf = (char *)malloc(totlen);
+    char *p = buf;
+    for(j = 0; j < E.numrows; j++){
+        memcpy(p, E.row[j].chars, E.row[j].size);
+        p+= E.row[j].size;
+        *p = '\n';
+        p++;
+    }
+
+    return buf;
+}
+
+void editorMoveCursor(int key) {
+    erow *row = (E.cy >= E.numrows)? NULL : &E.row[E.cy];
+
+    switch (key) {
+        case ARROW_LEFT:
+            if(E.cx != 0){
+                E.cx--;
+            }else if(E.cy > 0){
+                E.cy--;
+                E.cx = E.row[E.cy].size;
+            }
+            break;
+        case ARROW_RIGHT:
+            fprintf(fp1, "%s: %d %d\n", 
+                        row->chars, row->size, E.cx);
+            if(row && E.cx < row->size){
+                const char *temp = "rightArr";
+                fprintf(fp1, "%s: %d\n", temp, E.cy);
+                E.cx++;
+            }else if(row && E.cx == row->size){
+                E.cy ++;
+                E.cx = 0;
+            }
+            break;
+        case ARROW_UP:
+            if(E.cy != 0){ 
+                E.cy--;
+            }
+            break;
+        case ARROW_DOWN:
+            if(E.cy < E.numrows){
+                E.cy++;
+            }
+            break;
+    }
+
+    row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+    int rowlen = row ? row->size : 0;
+    if(E.cx > rowlen){
+        E.cx = rowlen;
+    }
+}
+
+int editorRowCxToRx(erow *row, int cx){
+    int rx = 0;
+    int j;
+    fprintf(fp1, "cxTorx: %d\n", cx);
+
+    for(j = 0; j < cx; j++){
+        if(row->chars[j] == '\t'){
+            rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP);
+        }
+        rx++;
+    }
+    return rx;
+}
+
+int editorRowRxToCx(erow *row, int rx){
+    int cur_rx = 0;
+    int cx;
+    for(cx = 0; cx < row->size; cx++){
+        if(row->chars[cx] == '\t')
+            cur_rx += (KILO_TAB_STOP - 1) - (cur_rx % KILO_TAB_STOP);
+        cur_rx++;
+        if (cur_rx > rx) return cx;
+    }
+    return cx;
+}
+
+void abAppend(abuf *ab, const char *s, int len1){
+    char *new_ptr = (char *)realloc(ab->b, ab->len + len1);
+
+    if(new_ptr == NULL){
+        return;
+    }
+
+    memcpy(new_ptr + (ab->len), s, len1);
+    ab->b = new_ptr;
+    ab->len += len1;
+}
+
+void abFree(abuf *ab){
+    free(ab->b);
+}
+
+void die(const char *s)
+{
+    write(STDOUT_FILENO, "\x1b[2J", 4);
+    write(STDOUT_FILENO, "\x1b[H", 3);
+
+    perror(s);
+    exit(1);
+}
+
+int32_t editorReadKey()
+{
+    int nread;
+    char c;
+    while ((nread = read(STDIN_FILENO, &c, 1)) != 1)
+    {
+        if (nread == -1 && errno != EAGAIN)
+            die("read");
+    }
+
+    if(c == '\x1b'){
+        char seq[3];
+        if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+
+        if(seq[0] == '['){
+            if(seq[1] >= '0' && seq[1] <= '9'){
+                if(read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
+                if(seq[2] == '~'){
+                    switch(seq[1]){
+                        case '1': return HOME_KEY;
+                        case '3': return DEL_KEY;
+                        case '4': return END_KEY;
+                        case '5': return PAGE_UP;
+                        case '6': return PAGE_DOWN;
+                        case '7': return HOME_KEY;
+                        case '8': return END_KEY;
+                    }
+                }
+            }
+            else{
+                switch(seq[1]){
+                    case 'A': return ARROW_UP;
+                    case 'B': return ARROW_DOWN;
+                    case 'C': return ARROW_RIGHT;
+                    case 'D': return ARROW_LEFT;
+                    case 'H': return HOME_KEY;
+                    case 'F': return END_KEY;
+                }
+            }
+        }else if(seq[0] == 'O'){
+            switch(seq[1]){
+                case 'H': return HOME_KEY;
+                case 'F': return END_KEY;
+            }
+        }
+
+        return '\x1b';
+    }else{
+        return c;
+    }
+}
+
+int getCursorPosition(int *rows, int *cols) {
+    char buf[32];
+    unsigned int i = 0;
+    if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
+    while (i < sizeof(buf) - 1) {
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
+        if (buf[i] == 'R') break;
+        i++;
+    }
+    buf[i] = '\0';
+    if (buf[0] != '\x1b' || buf[1] != '[') return -1;
+    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
+    return 0;
+}
+
+int getWindowSize(int *rows, int *cols) {
+    struct winsize ws;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
+        return getCursorPosition(rows, cols);
+    } 
+    else {
+        *cols = ws.ws_col;
+        *rows = ws.ws_row;
+        return 0;
+    }
+}
+
+int is_separator(int c) {
+    return isspace(c) || c == '\0' || strchr(",.()+-/*=~%<>[];", c) != NULL;
+}
+
+void editorUpdateSyntax(erow *row) {
+    row->hl = (unsigned char *)realloc(row->hl, row->rsize);
+    memset(row->hl, HL_NORMAL, row->rsize);
+
+    if (E.syntax == NULL) return;
+
+    const char **keywords = E.syntax->keywords;
+
+    const char *scs = E.syntax->singleline_comment_start;
+    const char *mcs = E.syntax->multiline_comment_start;
+    const char *mce = E.syntax->multiline_comment_end;
+
+    int scs_len = scs ? strlen(scs) : 0;
+    int mcs_len = mcs ? strlen(mcs) : 0;
+    int mce_len = mce ? strlen(mce) : 0;
+
+    int prev_sep = 1;
+    int in_string = 0;
+    int in_comment = (row->idx > 0 && E.row[row->idx - 1].hl_open_comment);
+
+    int i = 0;
+    while (i < row->rsize) {
+        char c = row->render[i];
+        unsigned char prev_hl = (i > 0) ? row->hl[i - 1] : HL_NORMAL;
+
+         if (scs_len && !in_string && !in_comment) {
+            if (!strncmp(&row->render[i], scs, scs_len)) {
+                memset(&row->hl[i], HL_COMMENT, row->rsize - i);
+                break;
+            }
+        }
+
+        if (mcs_len && mce_len && !in_string) {
+            if (in_comment) {
+                row->hl[i] = HL_MLCOMMENT;
+                if (!strncmp(&row->render[i], mce, mce_len)) {
+                    memset(&row->hl[i], HL_MLCOMMENT, mce_len);
+                    i += mce_len;
+                    in_comment = 0;
+                    prev_sep = 1;
+                    continue;
+                } else {
+                    i++;
+                    continue;
+                }
+            } else if (!strncmp(&row->render[i], mcs, mcs_len)) {
+                memset(&row->hl[i], HL_MLCOMMENT, mcs_len);
+                i += mcs_len;
+                in_comment = 1;
+                continue;
+            }
+        }
+
+        if (E.syntax->flags & HL_HIGHLIGHT_STRINGS) {
+            if (in_string) {
+                row->hl[i] = HL_STRING;
+                if (c == '\\' && i + 1 < row->rsize) {
+                    row->hl[i + 1] = HL_STRING;
+                    i += 2;
+                    continue;
+                }
+                if (c == in_string) in_string = 0;
+                i++;
+                prev_sep = 1;
+                continue;
+            } else {
+                if (c == '"' || c == '\'') {
+                in_string = c;
+                row->hl[i] = HL_STRING;
+                i++;
+                continue;
+                }
+            }
+        }
+
+        if (E.syntax->flags & HL_HIGHLIGHT_NUMBERS) {
+            if ((isdigit(c) && (prev_sep || prev_hl == HL_NUMBER))||
+                (c == '.' && prev_hl == HL_NUMBER)) {
+                row->hl[i] = HL_NUMBER;
+                i++;
+                prev_sep = 0;
+                continue;
+            }
+        }
+
+
+        if (prev_sep) {
+            int j;
+            for (j = 0; keywords[j]; j++) {
+                int klen = strlen(keywords[j]);
+                int kw2 = keywords[j][klen - 1] == '|';
+                if (kw2) klen--;
+                if (!strncmp(&row->render[i], keywords[j], klen) &&
+                    is_separator(row->render[i + klen])) {
+                    memset(&row->hl[i], kw2 ? HL_KEYWORD2 : HL_KEYWORD1, klen);
+                    i += klen;
+                    break;
+                }
+            }
+            if (keywords[j] != NULL) {
+                prev_sep = 0;
+                continue;
+            }
+        }
+
+        prev_sep = is_separator(c);
+        i++;
+    }
+
+    int changed = (row->hl_open_comment != in_comment);
+    row->hl_open_comment = in_comment;
+    if (changed && row->idx + 1 < E.numrows)
+        editorUpdateSyntax(&E.row[row->idx + 1]);
+}
+
+int editorSyntaxToColor(int hl) {
+  switch (hl) { 
+    case HL_COMMENT:
+    case HL_MLCOMMENT: return 36;
+    case HL_KEYWORD1: return 33;
+    case HL_KEYWORD2: return 32;
+    case HL_STRING: return 35;
+    case HL_NUMBER: return 31;
+    case HL_MATCH: return 34;
+    default: return 37;
+  }
+}
+
+void editorSelectSyntaxHighlight() {
+    E.syntax = NULL;
+    if (E.filename == NULL) return;
+    char *ext = strrchr(E.filename, '.');
+    for (unsigned int j = 0; j < HLDB_ENTRIES; j++) {
+        editorSyntax *s = &HLDB[j];
+        unsigned int i = 0;
+        while (s->filematch[i]) {
+            int is_ext = (s->filematch[i][0] == '.');
+            if ((is_ext && ext && !strcmp(ext, s->filematch[i])) ||
+                (!is_ext && strstr(E.filename, s->filematch[i]))) {
+                E.syntax = s;
+
+                int filerow;
+                for (filerow = 0; filerow < E.numrows; filerow++) {
+                    editorUpdateSyntax(&E.row[filerow]);
+                }
+
+                return;
+            }
+            i++;
+        }
+    }
+}
+
+void editorUpdateRow(erow *row){
+    fprintf(fp1, "%s\n","UpdateRowCalled");
+    int tabs = 0;
+    for(int j = 0; j < row->size; j++){
+        if(row->chars[j] == '\t') tabs++;
+    }
+
+    free(row->render);
+
+    row->render = (char *)malloc(sizeof(char) * (row->size + 
+                                            tabs * (KILO_TAB_STOP) + 1));
+    int j;
+    int idx = 0;
+
+    for(j = 0; j < row->size; j++){
+        if(row->chars[j] == '\t'){
+            row->render[idx++] = ' ';
+            while(idx % KILO_TAB_STOP != 0){
+                row->render[idx++] = ' ';
+            }
+        }
+        else{
+            row->render[idx++] = row->chars[j];
+        }
+    }
+
+    row->render[idx] = '\0';
+    row->rsize = idx;
+    fprintf(fp1, "updRow: %s: %d\n", row->chars, row->rsize);
+    editorUpdateSyntax(row);
+}
+
+void editorInsertRow(int at, const char *s, size_t len){
+    if (at < 0 || at > E.numrows) return;
+    E.row = (erow *) realloc(E.row, sizeof(erow) * (E.numrows + 1));
+    memmove(&E.row[at + 1], &E.row[at], sizeof(erow) * (E.numrows - at));
+    for (int j = at + 1; j <= E.numrows; j++) 
+        E.row[j].idx++;
+
+    E.row[at].idx = at;
+
+    E.row[at].size = len;
+    E.row[at].chars = (char *)malloc((len + 1) * sizeof(char));
+    mempcpy(E.row[at].chars, s, len);
+    E.row[at].chars[len]  = '\0';  
+
+    E.row[at].rsize = 0;
+    E.row[at].render = NULL;
+    E.row[at].hl = NULL;
+    E.row[at].hl_open_comment = 0;
+    editorUpdateRow(&E.row[at]);
+
+    E.numrows++;
+    E.dirty++;
+}
+
+void editorRowInsertChar(erow *row, int at, int c){
+    if(at < 0 || at > row->size) at = row->size;
+    row->chars = (char *)realloc(row->chars, row->size + 2);
+    memmove(&row->chars[at + 1], &row->chars[at], row->size -at + 1);
+    row->size++;
+    row->chars[at] = c;
+    editorUpdateRow(row);
+    E.dirty++;
+}
+
+void editorFreeRow(erow *row) {
+    free(row->render);
+    free(row->chars);
+    free(row->hl);
+}
+void editorDelRow(int at) {
+    if (at < 0 || at >= E.numrows) return;
+    editorFreeRow(&E.row[at]);
+    memmove(&E.row[at], &E.row[at + 1], sizeof(erow) * (E.numrows - at - 1));
+    for (int j = at; j < E.numrows - 1; j++) E.row[j].idx--;
+    E.numrows--;
+    E.dirty++;
+}
+
+void editorRowAppendString(erow *row, char *s, size_t len) {
+    row->chars = (char *) realloc(row->chars, row->size + len + 1);
+    memcpy(&row->chars[row->size], s, len);
+    row->size += len;
+    row->chars[row->size] = '\0';
+    editorUpdateRow(row);
+    E.dirty++;
+}
+
+void editorRowDelChar(erow *row, int at) {
+    if (at < 0 || at >= row->size) return;
+    memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
+    row->size--;
+    editorUpdateRow(row);
+    E.dirty++;
+}
+
+void editorInsertChar(int c) {
+  if (E.cy == E.numrows) {
+    char temp[] = "";
+    editorInsertRow(E.numrows, temp, 0);
+  }
+  editorRowInsertChar(&E.row[E.cy], E.cx, c);
+  E.cx++;
+}
+
+void editorInsertNewline(){
+    if(E.cx == 0){
+        editorInsertRow(E.cy, "", 0);
+    }else{
+        erow *row = &E.row[E.cy];
+        editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx);
+        row = &E.row[E.cy];
+        row->size = E.cx;
+        row->chars[row->size] = '\0';
+        editorUpdateRow(row);
+    }
+
+    E.cy++;
+    E.cx = 0;
+}
+
+void editorDelChar() {
+    if (E.cy == E.numrows) return;
+    if (E.cx == 0 && E.cy == 0) return;
+
+    erow *row = &E.row[E.cy];
+    if (E.cx > 0) {
+    editorRowDelChar(row, E.cx - 1);
+    E.cx--;
+    }else{
+        E.cx = E.row[E.cy - 1].size;
+        editorRowAppendString(&E.row[E.cy - 1], row->chars, row->size);
+        editorDelRow(E.cy);
+        E.cy--;
+    }
+}
+
+void editorOpen(char *filename){
+    free(E.filename);
+    E.filename = strdup(filename);
+
+    editorSelectSyntaxHighlight();
+
+    FILE *fp = fopen(filename, "r");
+    if(!fp) die("fopen");
+    char *line = NULL;
+    ssize_t linelen;
+    size_t linecap = 0;
+
+    while ((linelen = getline(&line, &linecap, fp)) != -1){
+        while(linelen > 0 && (line[linelen - 1] == '\n' || 
+                            line[linelen - 1] == '\r')){
+                                linelen --;
+                            }
+        editorInsertRow(E.numrows, line, linelen);
+    }
+    free(line);
+    fclose(fp);
+    E.dirty = 0;
+}
+
+void editorSave(){
+    if (E.filename == NULL) {
+        E.filename = editorPrompt("Save as: %s (ESC to cancel)", NULL);
+        if(E.filename == NULL){
+            editorSetStatusMessage("Save aborted");
+            return;
+        }
+
+        editorSelectSyntaxHighlight();
+    }
+
+    int len;
+    char *buf = editorRowsToString(&len);
+
+    int fd = open(E.filename, O_RDWR| O_CREAT, 0644);
+    if (fd != -1) {
+        if (ftruncate(fd, len) != -1) {
+            if (write(fd, buf, len) == len) {
+                close(fd);
+                free(buf);
+                E.dirty = 0;
+                editorSetStatusMessage("%d bytes written to disk", len);
+                return;
+            }
+        }
+        close(fd);
+    }
+    free(buf);
+    editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
+}
+
+void editorFindCallback(char *query, int key) {
+    static int last_match = -1;
+    static int direction = 1;
+
+    static int saved_hl_line;
+    static char *saved_hl = NULL;
+    if (saved_hl) {
+        memcpy(E.row[saved_hl_line].hl, saved_hl, E.row[saved_hl_line].rsize);
+        free(saved_hl);
+        saved_hl = NULL;
+    }
+
+    if (key == '\r' || key == '\x1b') {
+        last_match = -1;
+        direction = 1;
+        return;
+    }else if (key == ARROW_RIGHT || key == ARROW_DOWN) {
+        direction = 1;
+    } else if (key == ARROW_LEFT || key == ARROW_UP) {
+        direction = -1;
+    } else {
+        last_match = -1;
+        direction = 1;
+    }
+
+    if (last_match == -1) direction = 1;
+    int current = last_match;
+
+    int i;
+    for (i = 0; i < E.numrows; i++) {
+        current += direction;
+        if (current == -1) current = E.numrows - 1;
+        else if (current == E.numrows) current = 0;
+
+        erow *row = &E.row[current];
+        char *match = strstr(row->render, query);
+        if (match) {
+            last_match = current;
+            E.cy = current;
+            E.cx = editorRowRxToCx(row, match - row->render);
+            E.rowoff = E.numrows;
+
+            saved_hl_line = current;
+            saved_hl = (char *) malloc(row->rsize);
+            memcpy(saved_hl, row->hl, row->rsize);
+            memset(&row->hl[match - row->render], HL_MATCH, strlen(query));
+            break;
+        }
+    }
+}
+
+void editorFind(){
+    int saved_cx = E.cx;
+    int saved_cy = E.cy;
+    int saved_coloff = E.coloff;
+    int saved_rowoff = E.rowoff;
+    char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)",
+                             editorFindCallback);
+
+    if(query) free(query);
+    else {
+        E.cx = saved_cx;
+        E.cy = saved_cy;
+        E.coloff = saved_coloff;
+        E.rowoff = saved_rowoff;
+    }
+}
+
+void editorProcessKeypress() {
+    static int quit_times = KILO_QUIT_TIMES;
+    int c = editorReadKey();
+     switch (c) {
+        case '\r':
+            editorInsertNewline();
+            break;
+        case CTRL_KEY('q'):
+            if (E.dirty && quit_times > 0) {
+                editorSetStatusMessage("WARNING!!! File has unsaved changes. "
+                "Press Ctrl-Q %d more times to quit.", quit_times);
+                quit_times--;
+                return;
+            }
+            write(STDOUT_FILENO, "\x1b[2J", 4);
+            write(STDOUT_FILENO, "\x1b[H", 3);
+            exit(0);
+            break;
+
+        case CTRL_KEY('s'):
+            editorSave();
+            break;
+
+        case HOME_KEY:
+            E.cx = 0;
+            break;
+        case END_KEY:
+            if(E.cy < E.numrows){
+                E.cx = E.row[E.cy].size;
+            }
+            break;
+
+        case CTRL_KEY('f'):
+            editorFind();
+            break;
+
+        case BACKSPACE:
+        case CTRL_KEY('h'):
+        case DEL_KEY: 
+            if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT);
+                editorDelChar();
+            break;
+
+        case PAGE_UP:
+        case PAGE_DOWN:
+            {
+                if(c == PAGE_UP){
+                    E.cy = E.rowoff;
+                }else if(c == PAGE_DOWN){
+                    E.cy = E.rowoff + E.screenrows - 1;
+                    if(E.cy > E.numrows) E.cy = E.numrows;
+                }
+
+                int times = E.screenrows;
+                while(times--){
+                    editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+                }
+            }   
+            break;
+        case ARROW_UP:
+        case ARROW_DOWN:
+        case ARROW_LEFT:
+        case ARROW_RIGHT:
+            editorMoveCursor(c);
+            break;
+
+        case CTRL_KEY('l'):
+        case '\x1b':
+            break;
+
+        default:
+            editorInsertChar(c);
+            break;
+    }
+    quit_times = KILO_QUIT_TIMES;
+}
+
+void disableRawMode()
+{
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1)
+        die("tcsetattr");
+}
+
+void enableRawMode()
+{
+    if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1)
+        die("tcgetattr");
+    atexit(disableRawMode);
+    struct termios raw = E.orig_termios;
+    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw.c_oflag &= ~(OPOST);
+    raw.c_cflag |= (CS8);
+    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 1;
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
+        die("tcsetattr");
+}
+
+void editorScroll(){
+    E.rx = 0;
+
+    if(E.cy < E.numrows){
+        E.rx = editorRowCxToRx(&E.row[E.cy], E.cx);
+    }
+
+    if(E.cy < E.rowoff){
+        E.rowoff = E.cy;
+    }
+    if(E.cy >= E.rowoff + E.screenrows){
+        E.rowoff = E.cy - E.screenrows + 1;
+    }
+    if(E.rx < E.coloff){
+        E.coloff = E.rx;
+    }
+    if(E.rx >= E.coloff + E.screencols){
+        E.coloff = E.rx - E.screencols + 1;
+    }
+}
+
+void editorDrawRows(abuf *ab)
+{
+    int y;
+    for (y = 0; y < E.screenrows; y++){
+        int filerow = y + E.rowoff;
+        if( filerow >= E.numrows ){
+            if (E.numrows == 0 && y == E.screenrows / 3) {
+                char welcome[80];
+                int welcomelen = snprintf(welcome, sizeof(welcome),
+                    "Kilo editor -- version %s", KILO_VERSION);
+                if (welcomelen > E.screencols) welcomelen = E.screencols;
+                int padding = (E.screencols - welcomelen) / 2;
+                if (padding) {
+                    abAppend(ab, "~", 1);
+                    padding--;
+                }
+                while (padding--) abAppend(ab, " ", 1);
+                abAppend(ab, welcome, welcomelen);
+            } else {
+                abAppend(ab, "~", 1);
+            }
+
+        }else{
+            int len = E.row[filerow].rsize - E.coloff;
+            if(len < 0) len = 0;
+            if(len > E.screencols) len = E.screencols;
+            char *c = &E.row[filerow].render[E.coloff];
+            unsigned char *hl = &E.row[filerow].hl[E.coloff];
+            int j;
+            int current_color = -1;
+
+            for (j = 0; j < len; j++) {
+                if (iscntrl(c[j])) {
+                    char sym = (c[j] <= 26) ? '@' + c[j] : '?';
+                    abAppend(ab, "\x1b[7m", 4);
+                    abAppend(ab, &sym, 1);
+                    abAppend(ab, "\x1b[m", 3);
+                } else if (hl[j] == HL_NORMAL) {
+                        if (current_color != -1) {
+                            abAppend(ab, "\x1b[39m", 5);
+                            current_color = -1;
+                        }
+                        abAppend(ab, &c[j], 1);
+                } else {
+                         int color = editorSyntaxToColor(hl[j]);
+                        if (color != current_color) {
+                            current_color = color;
+                            char buf[16];
+                            int clen = snprintf(buf, sizeof(buf), "\x1b[%dm", color);
+                            abAppend(ab, buf, clen);
+                        }
+                        abAppend(ab, &c[j], 1);
+                }
+            }
+            abAppend(ab, "\x1b[39m", 5);
+        }
+
+        abAppend(ab, "\x1b[K", 3);
+        abAppend(ab, "\r\n", 2);
+    }
+}
+
+void editorDrawStatusBar(abuf *ab){
+    abAppend(ab, "\x1b[7m", 4);
+    char status[80], rstatus[80];
+    int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", 
+                            E.filename?E.filename: "[No Name]", E.numrows, 
+                            E.dirty ? "(modified)" : "");
+    int rlen = snprintf(rstatus, sizeof(rstatus), "%s | %d/%d",
+        E.syntax ? E.syntax->filetype : "no ft", E.cy + 1, E.numrows);
+
+    if(len > E.screencols){
+        len = E.screencols;
+    }
+    abAppend(ab, status, len);
+    while(len < E.screencols){
+        if(E.screencols - len == rlen){
+            abAppend(ab, rstatus, rlen);
+            break;
+        }else{
+            abAppend(ab, " ", 1);
+            len ++;
+        }
+    }
+
+    abAppend(ab, "\x1b[m", 3);
+    abAppend(ab, "\r\n", 2);
+}
+
+void editorDrawMessageBar(abuf *ab){
+    abAppend(ab, "\x1b[K", 3);
+    int msglen = strlen(E.statusmsg);
+    if(msglen > E.screencols){
+        msglen = E.screencols;
+    }
+    if (msglen && time(NULL) - E.statusmsg_time < 5)
+        abAppend(ab, E.statusmsg, msglen);
+}
+
+void editorRefreshScreen()
+{
+    editorScroll();
+    abuf ab = ABUF_INIT;
+
+    abAppend(&ab, "\x1b[?25l", 6);
+    abAppend(&ab, "\x1b[H", 3);
+    editorDrawRows(&ab);
+    editorDrawStatusBar(&ab);
+    editorDrawMessageBar(&ab);
+
+    char buf[32];
+    fprintf(fp1, "\ncx rx = %d %d\n", E.cx, E.rx);
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", 
+                (E.cy - E.rowoff) + 1, 
+                (E.rx - E.coloff) + 1);
+    abAppend(&ab, buf, strlen(buf));
+
+    abAppend(&ab, "\x1b[?25h", 6);
+    write(STDOUT_FILENO, ab.b, ab.len);
+    abFree(&ab);
+}
+
+char *editorPrompt(const char *prompt, void (*callback)(char *, int)){
+    size_t bufsize = 128;
+    char *buf = (char*)malloc(bufsize * sizeof(char));
+
+    size_t buflen = 0;
+    buf[0] = '\0';
+    while(1){
+        editorSetStatusMessage(prompt, buf);
+        editorRefreshScreen();
+
+        int c = editorReadKey();
+        if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
+            if (buflen != 0) buf[--buflen] = '\0';
+        } else if (c == '\x1b') {
+            editorSetStatusMessage("");
+            if (callback) callback(buf, c);
+            free(buf);
+            return NULL;
+        } else if(c == '\r'){
+            if(buflen != 0){
+                editorSetStatusMessage("");
+                if (callback) callback(buf, c);
+                return buf;
+            }
+        }else if (!iscntrl(c) && c < 128) {
+            if (buflen == bufsize - 1) {
+                bufsize *= 2;
+                buf = (char *)realloc(buf, bufsize);
+            }
+            buf[buflen++] = c;
+            buf[buflen] = '\0';
+        }
+
+         if (callback) callback(buf, c);
+    }
+}
+
+void editorSetStatusMessage(const char *fmt, ...){
+    va_list  ap;
+    va_start(ap, fmt);
+    vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
+    va_end(ap);
+    E.statusmsg_time = time(NULL);
+}
+
+void initEditor()
+{
+    E.cx = 0;
+    E.cy = 0;
+    E.numrows = 0;
+    E.row = NULL;
+    E.rowoff = 0;
+    E.coloff = 0;
+    E.rx = 0;
+    E.dirty = 0;
+    E.filename = NULL;
+    E.statusmsg[0] = '\0';
+    E.statusmsg_time = 0;
+    E.syntax = NULL;
+
+    if (getWindowSize(&E.screenrows, &E.screencols) == -1)
+        die("getWindowSize");
+    E.screenrows -= 2;
+}
+
+int main(int argc, char *argv[])
+{
+    enableRawMode();
+    initEditor();
+    E.row = NULL;
+    E.numrows = 0;
+    E.rowoff = 0;
+    if (argc >= 2) {
+        editorOpen(argv[1]);
+    }
+
+    editorSetStatusMessage(
+            "HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find");
+
+    while (1)
+    {
+        editorRefreshScreen();
+        editorProcessKeypress();
+    }
+    return 0;
+
+    tvfu
+}
+
+#!/usr/bin/python3
+
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+img = cv2.imread('lenna.png' , 0)
+
+#cv2.imshow('image' , img)
+#cv2.waitKey(0)
+#cv2.destroyAllWindows()
+
+#plt.imshow(img, cmap = 'gray', interpolation='bicubic')
+#plt.plot([50,100] , [80,100], 'c' ,linewidth=5)
+#plt.show()
+cv2.imwrite('graylenna.png', img)
+
+
+from multiprocessing import Pool
+import time
+
+
+def sqrt(n):
+	return n*n + (n/n+n) -n +(n*n)
+
+start = time.time()
+if __name__ == "__main__":
+	with Pool(processes=5) as p:
+		result = p.map(sqrt, range(1,10000000), chunksize = 1000000)
+	
+	
+print("\n", time.time() - start)
+
+
+#!/usr/bin/python
+import numpy as np
+import cv2
+
+lower_blue = np.array([110,50,50])
+upper_blue = np.array([130,255,255])
+cap = cv2.VideoCapture('a.mp4')
+
+while(cap.isOpened()):
+    ret, frame = cap.read()
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    mask = cv2.inRange(hsv, lower_blue, upper_blue)
+    cv2.imshow('mask' , mask)
+    cv2.imshow('frame', frame)
+    if cv2.waitKey(10) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
+#!/usr/bin/python3
+
+import cv2
+import numpy as np
+
+cap = cv2.VideoCapture(0)
+
+fourcc = cv2.VideoWriter_fourcc(*'XVID')
+out = cv2.VideoWriter('o.avi' , fourcc, 20, (640, 480))
+
+while True:
+	ret, frame = cap.read()
+	cv2.imshow('frame', frame)
+	gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+	cv2.imshow('black' , gray)
+	out.write(gray)
+	if cv2.waitKey(1) & 0xFF == ord('q'):
+		break
+
+cap.release()
+out.release()
+cv2.destroyAllWindows()
+
+24/08/2018
+Assignment statements in Python are more interesting than you might think
+Dibya Chakravorty Follow
+Physicist, programmer, entrepreneur and musician
+Jan 8, 2017 · 6 min read
+Assignment statements in Python are
+more interesting than you might think
+In this article, we will take a deep look at three kinds of assignment
+statements in Python and discuss what’s going on under the hood.
+>>> my_string = "Hello World"
+>>> another_string = my_string
+>>> another_string = another_string + "!"
+# right hand side is a
+# right hand side is a
+# right hand side is a
+What we nd may surprise you.
+What happens when the right hand side is
+a simple expression?
+The rst case is the easiest, so let us start with that.
+>>> my_string = "Hello World"
+In simple terms, this creates a string
+assigns the name
+my_string
+“Hello World”
+in memory and
+to it. If you are using CPython[1], then
+we can even check the memory address explicitly by using the built in
+function
+id
+.
+>>> my_string = “Hello World”
+>>> id(my_string)
+140400709562064
+That big number
+140400709562064
+denotes where the data lives in the
+memory. It will be very useful for us in this entire discussion.
+What happens if we create another string with the same value?
+https://medium.com/broken-window/many-names-one-memory-address-122f78734cb6
+1/924/08/2018
+Assignment statements in Python are more interesting than you might think
+>>> another_string = “Hello World”
+Does it reuse the previous “Hello World” stored in memory or does it
+create an independent copy? Let’s check this by querying the id
+function again.
+>>> id(another_string)
+140400709562208
+This outputs a di erent id, so this must be an independent copy. We
+conclude that:
+Assignment statements where the right hand side is a simple expression
+creates independent copies every time.
+While for everyday programming, this is the rule we should remember,
+there are actually some weird exceptions to this rule. Here’s an
+example.
+>>> my_string = “hello”
+>>> id(my_string)
+140400709562016
+>>> another_string = “hello”
+>>> id(another_string)
+140400709562016
+In this case, two consecutive assignment statements did not create
+independent copies. Why?
+It gets interesting now.
+For optimizing memory, Python treats a special set of objects di erently.
+The string
+“hello”
+belongs to this privileged set and has a di erent
+behavior. The exact set depends on the implementation like CPython,
+PyPy, Jython or IronPython. For CPython, the special rule applies to:
+• Strings without whitespaces and less than 20 characters and
+• Integers from -5 to +255.
+https://medium.com/broken-window/many-names-one-memory-address-122f78734cb6
+2/924/08/2018
+Assignment statements in Python are more interesting than you might think
+These objects are always reused or interned. The rationale behind doing
+this is as follows:
+1. Since programmers use these objects frequently, interning existing
+objects saves memory.
+2. Since immutable objects like tuples and strings cannot be
+modi ed, there is no risk in interning the same object.
+However, Python does not do this for all immutable objects because
+there is a runtime cost involved for this feature. For interning an object,
+it must rst search for the object in memory, and searching takes time.
+This is why the special treatment only applies for small integers and
+strings, because nding them is not that costly.
+What happens when the right hand side is an existing
+Python variable?
+Let’s move on to the second type of assignment statement where the
+right hand side is an existing Python variable.
+>>> another_string = my_string
+In this case, nothing is created in memory. After the assignment, both
+variables refer to the already existing object. It’s basically like giving the
+object an additional nickname or alias. Let’s con rm this by using the id
+function.
+>>> my_string = “Hello World”
+>>> id(my_string)
+140400709562160
+>>> another_string = my_string
+>>> id(another_string)
+140400709562160
+The natural question at this stage is : what if, instead of just giving the
+existing object an alias, we wanted to create an independent copy?
+For mutable objects, this is possible. You can either use the
+copy
+module of Python (which works on all objects) or you may use copy
+methods speci c to the class. For a
+list
+, you have several possibilities
+for creating copies, all of which have di erent runtime.
+https://medium.com/broken-window/many-names-one-memory-address-122f78734cb6
+3/924/08/2018
+Assignment statements in Python are more interesting than you might think
+>>>
+>>>
+>>>
+>>>
+>>>
+>>>
+my_list = [1, 2, 3]
+copy_of_my_list = my_list.copy()
+copy_of_my_list = my_list[:]
+copy_of_my_list = list(my_list)
+import copy
+copy_of_my_list = copy.copy(my_list)
+# fastest, works only on
+# same runtime as List.c
+# slightly slower
+# slowest
+How can you copy an immutable object? Well...you can’t! At least not in
+a straightforward way. If you try to use the copy module or the slicing
+notation, you will get back the same object and not an independent
+copy. Here’s proof.
+# Standard ways of copying lists do not apply for tuples
+>>> my_tuple = (1, 2, 3)
+>>> id(my_tuple)
+140371873244816
+>>> another_tuple = my_tuple[:]
+>>> id(another_tuple)
+140371873244816
+# The copy module also doesn’t help
+>>> import copy
+More importantly, there is no reason for explicitly copying an
+immutable object anyway. We will see why in a moment when we
+discuss the third kind of assignment statement.
+What happpens when the right hand side is an
+operation?
+In this case, what happens depends on the result of the operation. We
+will discuss two simple cases:
+1. adding an element to an immutable object (like a tuple) and
+2. adding an element to a mutable object (like a list).
+Let’s start with the case of the tuple.
+>>> another_tuple +=
+(4,)
+When you add a new element to a tuple using
+another_tuple += (4,)
+,
+this creates a new object in memory. The immutability of tuples is key
+https://medium.com/broken-window/many-names-one-memory-address-122f78734cb6
+4/924/08/2018
+Assignment statements in Python are more interesting than you might think
+to understanding this. Since tuples are immutable, any operation that
+leads to a changed tuple would result in an independent copy.
+This is the reason why you don’t need to explicitly copy immutable
+objects : it happens automatically under the hood. Here’s an example.
+>>>
+>>>
+>>>
+>>>
+(1,
+>>>
+(1
+my_tuple = (1, 2, 3)
+another_tuple = my_tuple
+another_tuple += (4,)
+print(another_tuple)
+2, 3, 4)
+print(my_tuple)
+2 3)
+# both variables point to the same
+# this statement creates a new ind
+# the old one remains unharmed
+The situation is much di erent for mutable objects and much more
+confusing. Let’s try the same example, but now for lists.
+>>>
+>>>
+>>>
+>>>
+[1,
+>>>
+[1
+my_list = [1, 2, 3]
+another_list = my_list
+another_list += [4,]
+print(another_list)
+2, 3, 4]
+print(my_list)
+2 3 4]
+# both variables point to the same o
+# this statement modifies the object
+# the original list is modified
+Mutable objects can be modi ed in place. Some operations modify the
+list in place and some operations don’t. In this case, the statement
+another_list += [4,]
+__iadd__
+calls
+another_list.__iadd__([4,])
+and
+modi es the existing object in place.
+To make things doubly confusing, we would have completely di erent
+results if we used a slightly di erent notation.
+>>>
+>>>
+>>>
+>>>
+[1,
+>>>
+[1
+my_list = [1, 2, 3]
+another_list = my_list
+another_list = another_list + [4,]
+print(another_list)
+2, 3, 4]
+print(my_list)
+2 3]
+# both variables point to t
+# this creates an independe
+# the original list is unha
+Woah! What’s going on? What changed?
+It turns out that when we change the third line, Python now internally
+calls a di erent function
+__iadd__
+another_list.__add__([4,])
+instead of
+. This function returns a new copy instead of modifying the
+list in place.
+https://medium.com/broken-window/many-names-one-memory-address-122f78734cb6
+5/924/08/2018
+Assignment statements in Python are more interesting than you might think
+To prevent this confusion, it is always better to create a true copy of the
+list if you wish to prevent modi cation to the original.
+Let’s remember the list copy methods from before. They were
+List.copy()
+,
+[:]
+,
+list()
+and
+copy.copy()
+. This is what we
+should use.
+>>>
+>>>
+>>>
+>>>
+[1,
+>>>
+[1
+my_list = [1, 2, 3]
+another_list = my_list.copy()
+another_list += [4,]
+print(another_list)
+2, 3, 4]
+print(my_list)
+2 3]
+# this creates an independent c
+# this statement modifies the i
+# the original list is unharmed
+There’s one last gotcha that can happen when copying lists.
+Suppose we have a list that has a nested list inside it. We copy this list
+using
+List.copy()
+and then modify the nested list. Unfortunately, this
+will modify the original list again!
+>>> my_list = [[1, 2, 3], 4, 5]
+>>> another_list = my_list.copy()
+>>> another_list[0] += [6,]
+>>> print(another_list)
+[[1, 2, 3, 6], 4, 5]
+>>> print(my_list)
+[[1 2 3 6] 4 5]
+Why did that happen? Didn’t we just copy the original list?
+The truth is : we actually don’t have a completely independent copy in
+this case. The
+copy()
+function generates a shallow copy. To see what it
+does, let’s look at the ids of all the elements in
+my_list
+and the ids of
+all the elements in the copied list.
+# for my_list
+>>> my_list = [[1, 2, 3], 4, 5]
+>>> id(my_list)
+140371873277424
+>>> print([id(x) for x in my_list])
+[140371873599288, 13820176, 13820152]
+# for another_list obtained by my_list.copy()
+>>> id(another_list)
+https://medium.com/broken-window/many-names-one-memory-address-122f78734cb6
+6/924/08/2018
+Assignment statements in Python are more interesting than you might think
+We see the ids of
+indicating
+another_list
+contained in
+my_list
+and
+my_list
+another_list
+are indeed di erent,
+is a copy. But the ids of the elements
+another_list
+have the same ids as the elements in
+. So the elements have not been copied!
+This is the property of shallow copy. It creates a new copy of the object
+but reuses the attributes and elements of the old copy. Thus, when you
+modify the elements of the new copy, you are modifying the elements
+of the old copy too.
+To solve this problem, we need to copy an object along with all its
+attributes and elements. This can be achieved by
+copy.deepcopy
+.
+>>> my_list = [[1, 2, 3], 4, 5]
+>>> another_list = copy.deepcopy(my_list)
+>>> another_list[0] += [6,]
+>>> another_list
+[[1, 2, 3, 6], 4, 5]
+>>> my_list
+[[1 2 3] 4 5]
+Deep copy is a quite time intensive operation and can take 1o times
+longer to complete compared to a shallow copy. But in some situations,
+it is unavoidable.
+Conclusion
+This brings me to the end of this discussion. To summarize, we have
+talked about the di erent scenarios which can arise in an assignment
+statement in Python. We found that:
+•
+When the right hand side is a simple expression, a new copy is
+created every time. There are some exceptions to this rule, which
+depend on the implementation.
+•
+When the right hand side is an existing Python variable, then an
+alias is created for the existing copy.
+•
+When the right hand side is an operation, then the outcome
+depends on the operation. In a simple case involving a tuple, we
+saw that an independent copy was created. In the same case with
+lists, we saw that the list was modi ed in place in one case (when
+we used
+__iadd__
+) and a new copy was generated in another
+case (when we used
+•
+__add__
+).
+Mutable objects can be copied but immutable objects cannot be
+copied in a straightforward way. There is also no need to copy
+https://medium.com/broken-window/many-names-one-memory-address-122f78734cb6
+7/924/08/2018
+Assignment statements in Python are more interesting than you might think
+immutable objects.
+•
+To copy a mutable object along with all its attributes and elements,
+we need to use deep copy.
+That’s it for today. Thanks for reading so far. As always, I love reading
+your comments and discussing further. So don’t hesitate to respond in
+the comment section.
+If you liked this post, please hit the ❤ button to recommend it. This will
+help other medium readers nd this post.
+. . .
+[1] CPython is just one implementation of Python. There are other
+implementations like PyPy, Jython and IronPython. These variations
+might implement the built in function
+what the implementation is,
+id
+id
+di erently. But no matter
+will return an unique id for an object
+during its lifetime. This property is all we need for the discussions in
+this article.
+https://medium.com/broken-window/many-names-one-memory-address-122f78734cb6
+8/924/08/2018
+Assignment statements in Python are more interesting than you might think
+https://medium.com/broken-window/many-names-one-memory-address-122f78734cb6
+9/9
+
+### OPTIMIZATION
+
+##### Optimization
+-   Derivative/Gradient Based 
+-   Derivative Free
+    - Statistical Methods
+    - Sampling Based
+    - Monter Carlo
+        - Genetic Algorithm
+        - MCMC
+            - Evolutionary Computation
+            - Ant-Conoly
+
+# Genetic algorithm
+> 1. Inheritance.
+> 2. Variation.
+
+#include<bits/stdc++.h>
+#include<unistd.h>
+#include<fcntl.h>
+#include<pthread.h>
+
+using namespace std; 
+
+typedef struct{
+    bool update;
+    int hareDist;
+    int turtoiseDist;
+} updateData;
+
+updateData newVal;
+long const trackLength = 1e9;
+long hareTime = 0, turtoiseTime = 0;
+long hareDist = 0, turtoiseDist = 0;
+long const hareStep = 3, turtoiseStep = 1;
+
+long const minIntervalRequired = 100000;
+long const minHareSleeps = 1000;
+
+pthread_mutex_t hareDistMtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t turtoiseDistMtx = PTHREAD_MUTEX_INITIALIZER;
+
+
+//Input to god 
+void getNewVal(){
+    newVal = {false, -1, -1};
+    if(rand() % 10 >=8){    //update with probability 0.2
+        newVal.update = true;
+        newVal.hareDist = rand() % (trackLength);
+        newVal.turtoiseDist = rand() % (trackLength);
+    }
+}
+
+void *hareFunction( void *argc ){
+    long sleepTime = 0;
+
+    while( true ){
+        if(sleepTime == 0){
+            pthread_mutex_lock(&hareDistMtx);
+            pthread_mutex_lock(&turtoiseDistMtx);
+            if (hareDist >= trackLength){
+                pthread_mutex_unlock(&turtoiseDistMtx);
+                pthread_mutex_unlock(&hareDistMtx);
+                break;
+            }
+            if( hareDist > turtoiseDist + ( rand() % 10 + minIntervalRequired)){
+                sleepTime = rand() % minHareSleeps;
+            }
+            else{
+                hareDist+=hareStep;
+            }
+            pthread_mutex_unlock(&turtoiseDistMtx);
+            pthread_mutex_unlock(&hareDistMtx);
+        }
+        else {
+            sleepTime--;
+        }
+        hareTime++;
+    }
+
+    pthread_exit( (void  *) 0 );
+}
+
+void *turtoiseFunction( void *argc ){
+    while( true ){
+        pthread_mutex_lock(&turtoiseDistMtx);
+        if(turtoiseDist >= trackLength){
+            pthread_mutex_unlock(&turtoiseDistMtx);
+            break;
+        }
+        turtoiseDist+=turtoiseStep;
+        pthread_mutex_unlock(&turtoiseDistMtx);
+        turtoiseTime++;
+    }
+
+    pthread_exit( (void*) 0 );
+}
+
+void *reporterFunction( void *argc ){
+    while( true ){
+        if( turtoiseDist >= trackLength && hareDist >= trackLength ){
+            break;
+        }
+        cout<<"\n---------------\n";
+        cout<<"Hare Position: "<<hareDist<<endl<<"Turtoise Position: "<<turtoiseDist<<endl;
+    }
+
+    pthread_exit( (void*) 0 );
+}
+
+void *godFunction( void *argc ){
+    while(true){
+        getNewVal();
+        pthread_mutex_lock(&hareDistMtx);
+        pthread_mutex_lock(&turtoiseDistMtx);
+        if( turtoiseDist >= trackLength && hareDist >= trackLength ){
+            pthread_mutex_unlock(&turtoiseDistMtx);
+            pthread_mutex_unlock(&hareDistMtx);
+            break;
+        }
+        if(newVal.update){
+            if(hareDist < trackLength) hareDist = newVal.hareDist;
+            if(turtoiseDist < trackLength) turtoiseDist = newVal.turtoiseDist;
+        }
+        pthread_mutex_unlock(&turtoiseDistMtx);
+        pthread_mutex_unlock(&hareDistMtx);
+        usleep(500);
+    }
+}
+
+int createThread(pthread_t &tidp, void *(*fun_ptr)(void *)){
+    if( pthread_create(&tidp, NULL, fun_ptr, NULL) != 0 ){
+        cout<<"Error in Creating Thread\n";
+        exit(EXIT_FAILURE);
+    }
+
+    return 0;
+}
+
+int main(){
+    pthread_t tidp[4];
+
+    srand (time(0));
+
+    /*Reference for information purpose only*/
+    pthread_t &hareThread = tidp[0], &turtoiseThread = tidp[1], 
+                &reporterThread = tidp[2], &godThread = tidp[3];
+
+    /*Initialize Thread*/
+    createThread(tidp[0], hareFunction);
+    createThread(tidp[1], turtoiseFunction);
+    createThread(tidp[2], reporterFunction);
+    createThread(tidp[3], godFunction);
+
+    /*Join main thread with all other threads*/
+    for(int i = 0; i < 4; i ++){
+        if( pthread_join( tidp[i], NULL ) != 0 ){
+            cout<<"Error in joining thread\n";
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    /*Print Result of marathon */
+    cout<<"HareTime: "<<hareTime<<" TurtoiseTime: "<<turtoiseTime<<endl;
+    cout<<"Result: ";
+    if(hareTime == turtoiseTime ){
+        cout<<"Draw\n";
+    }
+    else if(hareTime > turtoiseTime){
+        cout<<"Turtoise Wins\n";
+    }
+    else{
+        cout<<"Hare Wins\n";
+    }
+}
+
+> 3. Selection.
+
+**Key Components of GA**:
+1. Optimization Function
+2. Fitness Function: Measure fitness.
+3. Selection Function: Select from a pool.
+
+**Variation**
+1. Cross Over
+2. Mutation
+
+**Selection**
+1. Basis for Selection? 
+    1. Elitism: Elitism means we will give more importance to the fittest function.
+    2. Diversity
+
+2. Selection Methods:
+
+    **Ranking**: In this selection method each individual is assigned a rank. One of the method to do Rank Selection is : The fittest individual is assigned rank n and the worst individual is assigned rank 1. Then Probability of individual i to get selected is defined as
+
+    $$P(i) = \frac{2*Rank(i)}{n*(n-1)}$$
+
+    
+    **Tournament**:
+    Randomly Select m number of individual from the pool and then order them according to their fitness and fittest individuals are selected for reproduction. 
+
+    **Proportionate**:
+    The probability of an individual to get selected is proportional to its fitness values. Probabilitiy of individual i to get selected is defined as 
+    
+    $$P(i) = \frac{fitness(i)}{\sum_{i = 1}^{n}fitness(i)}$$
+
+When implementing a neural network from scratch, backpropagation is arguably where it is more prone to mistakes. Therefore, a method to debug this step could potentially save a lot of time and headaches when debugging a neural network.
+
+Here, the method of gradient checking will be introduced. Briefly, this methods consists in approximating the gradient using a numerical approach. If it is close to the calculated gradients, then backpropagation was implemented correctly!
+
+Let’s dive into more details and let’s see how it can be implemented in a project.
+
+Thomas Jeffrey Hanks (born July 9, 1956) is an American actor and filmmaker. Hanks is known for his comedic and dramatic roles in such films as Splash (1984), Big (1988), Turner & Hooch (1989), A League of Their Own (1992), Sleepless in Seattle (1993), Apollo 13 (1995), You've Got Mail (1998), The Green Mile (1999), Cast Away (2000), Road to Perdition (2002), Cloud Atlas (2012), Captain Phillips (2013), Saving Mr. Banks (2013), and Sully (2016). He has also starred in the Robert Langdon film series, and voices Sheriff Woody in the Toy Story film series.
+
+Hanks has collaborated with film director Steven Spielberg on five films to date: Saving Private Ryan (1998), Catch Me If You Can (2002), The Terminal (2004), Bridge of Spies (2015), and The Post (2017), as well as the 2001 miniseries Band of Brothers, which launched Hanks as a successful director, producer, and screenwriter. In 2010, Spielberg and Hanks were executive producers on the HBO miniseries The Pacific.
+
+Hanks' films have grossed more than $4.6 billion at U.S. and Canadian box offices and more than $9.2 billion worldwide,[2] making him the fourth highest-grossing actor in North America.[3] Hanks has been nominated for numerous awards during his career. He won a Golden Globe Award and an Academy Award for Best Actor for his role in Philadelphia (1993), as well as a Golden Globe, an Academy Award, a Screen Actors Guild Award, and a People's Choice Award for Best Actor for Forrest Gump (1994). In 1995, Hanks became one of only two actors who won the Academy Award for Best Actor in consecutive years, with Spencer Tracy being the other.[4] In 2004, he received the Stanley Kubrick Britannia Award for Excellence in Film from the British Academy of Film and Television Arts (BAFTA).[5] In 2014, he received a Kennedy Center Honor, and in 2016, he received a Presidential Medal of Freedom from President Barack Obama,[6] as well as the French Legion of Honor.[7]
+
+Thomas Jeffrey Hanks[8] was born in Concord, California on July 9, 1956,[9][10] to hospital worker Janet Marylyn (née Frager)[11] and itinerant cook Amos Mefford Hanks.[10][12][13] His mother was of Portuguese descent (her family's surname was originally "Fraga"),[14] while his father had English ancestry.[15][16] His parents divorced in 1960. Their three oldest children, Sandra (later Sandra Hanks Benoiton, a writer),[17] Larry (an entomology professor at the University of Illinois at Urbana–Champaign),[18] and Tom, went with their father, while the youngest, Jim (who also became an actor and filmmaker), remained with their mother in Red Bluff, California.[19] In his childhood, Hanks' family moved often; by the age of 10, he had lived in 10 different houses.[20]
+
+While Hanks' family religious history was Catholic and Mormon, he has characterized his teenage self as being a "Bible-toting evangelical" for several years.[21] In school, he was unpopular with students and teachers alike, later telling Rolling Stone magazine, "I was a geek, a spaz. I was horribly, painfully, terribly shy. At the same time, I was the guy who'd yell out funny captions during filmstrips. But I didn't get into trouble. I was always a real good kid and pretty responsible."[22] In 1965, his father married Frances Wong, a San Francisco native of Chinese descent. Frances had three children, two of whom lived with Hanks during his high school years. Hanks acted in school plays, including South Pacific, while attending Skyline High School in Oakland, California.[23]
+
+Hanks studied theater at Chabot College in Hayward, California, and transferred to California State University, Sacramento, two years later.[24] During a 2001 interview with Bob Costas, Hanks was asked whether he would rather have an Oscar or a Heisman Trophy. He replied he would rather win a Heisman by playing halfback for the California Golden Bears.[25] He told New York magazine in 1986, "Acting classes looked like the best place for a guy who liked to make a lot of noise and be rather flamboyant. I spent a lot of time going to plays. I wouldn't take dates with me. I'd just drive to a theater, buy myself a ticket, sit in the seat and read the program, and then get into the play completely. I spent a lot of time like that, seeing Brecht, Tennessee Williams, Ibsen, and all that."[26]
+
+During his years studying theater, Hanks met Vincent Dowling, head of the Great Lakes Theater Festival in Cleveland, Ohio.[12] At Dowling's suggestion, Hanks became an intern at the festival. His internship stretched into a three-year experience that covered most aspects of theater production, including lighting, set design, and stage management, prompting Hanks to drop out of college. During the same time, Hanks won the Cleveland Critics Circle Award for Best Actor for his 1978 performance as Proteus in Shakespeare's The Two Gentlemen of Verona, one of the few times he played a villain.[27] Time magazine named Hanks one of the "Top 10 College Dropouts."[28]
+
+
+1987–2003: Established Star
+After a few more flops and a moderate success with the comedy Dragnet, Hanks' stature in the film industry rose. The broad success of the fantasy comedy Big (1988) established Hanks as a major Hollywood talent, both as a box office draw and within the industry as an actor.[8][12][37] For his performance in the film, Hanks earned his first nomination for the Academy Award for Best Actor.[38] Big was followed later that year by Punchline, in which he and Sally Field co-starred as struggling comedians.
+
+Hanks then suffered a run of box-office underperformers: The 'Burbs (1989), Joe Versus the Volcano (1990), and The Bonfire of the Vanities (1990).[12] In the last, he portrayed a greedy Wall Street figure who gets enmeshed in a hit-and-run accident. 1989's Turner & Hooch was Hanks' only financially successful film of the period.
+
+Hanks climbed back to the top again with his portrayal of a washed-up baseball legend turned manager in A League of Their Own (1992).[12] Hanks has stated that his acting in earlier roles was not great, but that he subsequently improved. In an interview with Vanity Fair, Hanks noted his "modern era of moviemaking ... because enough self-discovery has gone on ... My work has become less pretentiously fake and over the top". This "modern era" began in 1993 for Hanks, first with Sleepless in Seattle and then with Philadelphia. The former was a blockbuster success about a widower who finds true love over the radio airwaves.[39] Richard Schickel of TIME called his performance "charming," and most critics agreed that Hanks' portrayal ensured him a place among the premier romantic-comedy stars of his generation.[40]
+
+In Philadelphia, he played a gay lawyer with AIDS who sues his firm for discrimination.[12] Hanks lost 35 pounds and thinned his hair in order to appear sickly for the role. In a review for People, Leah Rozen stated, "Above all, credit for Philadelphia's success belongs to Hanks, who makes sure that he plays a character, not a saint. He is flat-out terrific, giving a deeply felt, carefully nuanced performance that deserves an Oscar." Hanks won the 1993 Academy Award for Best Actor for his role in Philadelphia.[12][41] During his acceptance speech, he revealed that his high school drama teacher Rawley Farnsworth and former classmate John Gilkerson, two people with whom he was close, were gay.[42]
+
+Hanks followed Philadelphia with the 1994 hit Forrest Gump which grossed a worldwide total of over $600 million at the box office.[43] Hanks remarked: "When I read the script for Gump, I saw it as one of those kind of grand, hopeful movies that the audience can go to and feel ... some hope for their lot and their position in life ... I got that from the movies a hundred million times when I was a kid. I still do." Hanks won his second Best Actor Academy Award for his role in Forrest Gump, becoming only the second actor to have accomplished the feat of winning consecutive Best Actor Oscars.[44] (Spencer Tracy was the first, winning in 1937–38. Hanks and Tracy were the same age at the time they received their Academy Awards: 37 for the first and 38 for the second.)[45][46]
+
+Hanks' next role—astronaut and commander Jim Lovell, in the 1995 film Apollo 13—reunited him with Ron Howard.[12] Critics generally applauded the film and the performances of the entire cast, which included actors Kevin Bacon, Bill Paxton, Gary Sinise, Ed Harris, and Kathleen Quinlan. The movie also earned nine Academy Award nominations, winning two. Later that year, Hanks starred in Disney/Pixar's CGI-animated hit film Toy Story, as the voice of Sheriff Woody.[47]
+
+
+Hanks' cement prints in front of the 
+
+2004–present: Later work
+In 2004, he appeared in three films: The Coen brothers' The Ladykillers, another Spielberg film, The Terminal, and The Polar Express, a family film from Zemeckis for which Hanks played multiple motion capture roles. In a USA Weekend interview, Hanks discussed how he chooses projects: "[Since] A League of Their Own, it can't be just another movie for me. It has to get me going somehow ... There has to be some all-encompassing desire or feeling about wanting to do that particular movie. I'd like to assume that I'm willing to go down any avenue in order to do it right". In August 2005, Hanks was voted in as vice president of the Academy of Motion Picture Arts and Sciences.[69]
+
+Hanks next starred in the highly anticipated film The Da Vinci Code, based on the best-selling novel by Dan Brown. The film was released May 19, 2006, in the U.S. and grossed over US$750 million worldwide.[70] He followed the film with Ken Burns's 2007 documentary The War. For the documentary, Hanks did voice work, reading excerpts from World War II-era columns by Al McIntosh. In 2006, Hanks topped a 1,500-strong list of "most trusted celebrities" compiled by Forbes magazine.[71] Hanks also produced the animated children's movie The Ant Bully in 2006.
+
+Hanks next appeared in a cameo role as himself in The Simpsons Movie, in which he appeared in an advertisement claiming that the U.S. government has lost its credibility and is hence buying some of his. He also made an appearance in the credits, expressing a desire to be left alone when he is out in public. Later in 2006, Hanks produced the British film Starter for Ten, a comedy based on working-class students attempting to win on University Challenge.[72]
+
+In 2007, Hanks starred in Mike Nichols's film Charlie Wilson's War (written by screenwriter Aaron Sorkin) in which he played Democratic Texas Congressman Charles Wilson. The film opened on December 21, 2007, and Hanks received a Golden Globe nomination.[73] In the comedy-drama film The Great Buck Howard (2008), Hanks played the on-screen father of a young man (played by Hanks' real-life son, Colin) who chooses to work as road manager for a fading mentalist (John Malkovich). His character was less than thrilled about his son's career decision.[74] In the same year, he executive produced the musical comedy, Mamma Mia and the miniseries, John Adams.[75][76]
+
+Hanks' next endeavor, released on May 15, 2009, was a film adaptation of Angels & Demons, based on the novel of the same name by Dan Brown. Its April 11, 2007, announcement revealed that Hanks would reprise his role as Robert Langdon, and that he would reportedly receive the highest salary ever for an actor.[77][78] The following day he made his 10th appearance on NBC's Saturday Night Live, impersonating himself for the Celebrity Jeopardy sketch. Hanks produced the Spike Jonze film Where The Wild Things Are, based on the children's book by Maurice Sendak in 2009.[79]
+
+In 2010, Hanks reprised his voice role of Woody in Toy Story 3, after he, Tim Allen, and John Ratzenberger were invited to a movie theater to see a complete story reel of the movie.[80] The film went on to become the first animated film to gross a worldwide total of over $1 billion as well as the highest-grossing animated film at the time.[81][82][83] He also was executive producer of the miniseries, The Pacific.[84]
+
+In 2011, he directed and starred opposite Julia Roberts in the title role in the romantic comedy Larry Crowne.[85] The movie received poor reviews, with only 35% of the 175 Rotten Tomatoes reviews giving it high ratings.[86] Also in 2011, he starred in the drama film Extremely Loud and Incredibly Close.[87] In 2012, he voiced the character Cleveland Carr for a web series he created titled Electric City.[88] He also starred in the Wachowskis-directed film adaptation of the novel of the same name, Cloud Atlas and was executive producer of the miniseries Game Change.[89]
+
+In 2013, Hanks starred in two critically acclaimed films—Captain Phillips and Saving Mr. Banks—which each earned him praise, including nominations for the BAFTA Award for Best Actor in a Leading Role and the Golden Globe Award for Best Actor – Motion Picture Drama for the former role.[90][91] In Captain Phillips, he starred as Captain Richard Phillips with Barkhad Abdi, which was based on the Maersk Alabama hijacking.[92] In Saving Mr. Banks, co-starring Emma Thompson and directed by John Lee Hancock, he played Walt Disney, being the first actor to portray Disney in a mainstream film.[93] That same year, Hanks made his Broadway debut, starring in Nora Ephron's Lucky Guy, for which he was nominated for the Tony Award for Best Actor in a Play.[94]
+
+In 2014, Hanks' short story "Alan Bean Plus Four" was published in the October 27 issue of The New Yorker.[95] Revolving around four friends who make a voyage to the moon, the short story is titled after the Apollo 12 astronaut Alan Bean. Slate magazine's Katy Waldman found Hanks' first published short story "mediocre", writing that "Hanks' shopworn ideas about technology might have yet sung if they hadn't been wrapped in too-clever lit mag-ese".[96] In an interview with The New Yorker, Hanks said he has always been fascinated by space. He told the magazine that he built plastic models of rockets when he was a child and watched live broadcasts of space missions back in the 1960s.[97]
+
+In March 2015, Hanks appeared in the Carly Rae Jepsen music video for "I Really Like You", lip-syncing most of the song's lyrics as he goes through his daily routine.[98] His next film was the Steven Spielberg-directed historical drama Bridge of Spies, in which he played lawyer James B. Donovan who negotiated for the release of pilot Francis Gary Powers by the Soviet Union in exchange for KGB spy Rudolf Abel. It was released in October 2015 to a positive reception.[99] In April 2016, Hanks starred as Alan Clay in the comedy-drama A Hologram for the King, an adaptation of the 2012 novel of the same name.[100] It's the second time he was directed by Tom Tykwer after Cloud Atlas in 2012.[101]
+
+Hanks starred as airline captain Chesley Sullenberger in Clint Eastwood's Sully, which was released in September 2016.[102] He next reprised his role as Robert Langdon in Inferno (2016),[103] and co-starred alongside Emma Watson in the 2017 science fiction drama The Circle.[104] He voiced David S. Pumpkins in The David S. Pumpkins Animated Halloween Special, which aired October 28, 2017, on NBC, a character he had portrayed in episodes of Saturday Night Live.[105]
+
+Upcoming
+Hanks will reprise his voice role as Sheriff Woody in Pixar's Toy Story 4, set for release on June 21, 2019.[106][107] Then, Hanks will portray Fred Rogers in Marielle Heller's biographical film A Beautiful Day in the Neighborhood. The film will be released on November 22, 2019, by Sony Pictures.[108][109] Hanks will then star as Commander Ernest Krause in Greyhound, a war film to be directed by Aaron Schneider. The film is slated for release on May 8, 2020, by Sony Pictures.[110][111]
+
+In October 2017, Hanks signed on to star as Finch, the last surviving man on Earth, in the science fiction drama BIOS. Principal production commenced in February 2019. The film is set to be released on October 2, 2020 by Universal Pictures.[112][113][114] In February 2019, Hanks was cast in News of the World, to be his second collaboration with director Paul Greengrass. Additional casting was in the works.[115]
+
+HBO confirmed in January 2013 that it was developing a third World War II miniseries based on the book Masters of the Air by Donald L. Miller with Hanks and Spielberg to follow Band of Brothers and The Pacific.[116] Few details have emerged about the project since, but NME reported in March 2017 that production was progressing under the working title The Mighty Eighth.[117]
+
+Personal life
+
+Hanks and wife Rita Wilson at the 1989 Oscars
+Hanks was married to American actress Samantha Lewes from 1978. They had one son, actor Colin Hanks (born 1977),[118] and one daughter, Elizabeth Hanks (born 1982).[8]
+
+In 1981, Hanks met actress Rita Wilson on the set of TV comedy Bosom Buddies (1980–1982). They were reunited in 1985 on the set of Volunteers.[8]
+
+Hanks and Samantha Lewes divorced in 1987.[8][119]
+
+Hanks married Wilson in 1988. They have two sons. The oldest, Chester Marlon "Chet" Hanks, had a minor role as a student in Indiana Jones and the Kingdom of the Crystal Skull and released a rap song in 2011.[120] Their youngest, Truman Theodore, was born in 1995.[121]
+
+Before marrying Wilson, Hanks converted to the Greek Orthodox Church, the religion of Wilson and her family.[122][123] He said, "I must say that when I go to church—and I do go to church—I ponder the mystery. I meditate on the 'why?' of 'why people are as they are' and 'why bad things happen to good people,' and 'why good things happen to bad people' ... The mystery is what I think is, almost, the grand unifying theory of all mankind."[21]
+
+On October 7, 2013, on The Late Show with David Letterman, Hanks announced that he has Type 2 diabetes.[124]
+
+Politics and activism
+Hanks supports same-sex marriage, environmental causes, and alternative fuels. He has donated to many Democratic politicians, and during the 2008 United States presidential election uploaded a video to his MySpace account endorsing Barack Obama.[125] He also narrated a 2012 documentary, The Road We've Traveled, created by Obama for America.[126] In 2016, Hanks endorsed Hillary Clinton in the 2016 presidential election.[127]
+
+Hanks was outspoken about his opposition to the 2008 Proposition 8, an amendment to the California constitution that defined marriage as a union only between a man and a woman. Hanks and others raised over US$44 million to campaign against the proposition, in contrast to the supporters' $39 million,[128] but Proposition 8 passed with 52% of the vote.[129] It was overruled in June 2013, when the Ninth Circuit lifted its stay of the district court's ruling, enabling Governor Jerry Brown to order same-sex marriage officiations to resume.[130] While premiering a TV series in January 2009, Hanks called supporters of Proposition 8 "un-American" and criticized the LDS Church members, who were major proponents of the bill, for their views on marriage and role in supporting the bill.[131][132] About a week later, he apologized for the remark, saying that nothing is more American than voting one's conscience.[133]
+
+A proponent of environmentalism, Hanks is an investor in electric vehicles and owns a Toyota RAV4 EV and the first production AC Propulsion eBox. He was a lessee of an EV1 before it was recalled, as chronicled in the documentary Who Killed the Electric Car?[134] He was on the waiting list for an Aptera 2 Series.[135]
+
+Hanks serves as campaign chair of the Hidden Heroes Campaign of the Elizabeth Dole Foundation. The stated mission of the campaign is to inspire a national movement to more effectively support the military and veteran caregivers.[136][137]
+
+In 2004, while touring the White House, Hanks learned that the press corps did not have a coffee pot, and shortly thereafter he donated an espresso machine. He again donated new machines in 2010 and 2017. His 2017 donation was accompanied by a note that read "To the White House Press Corps, Keep up the good fight for Truth, Justice, and the American Way. Especially for the truth part."[138][139]
+
+Other activities
+
+Hanks with Steven Spielberg at the National World War II Memorial in March 2010
+A supporter of NASA's manned space program, Hanks said he originally wanted to be an astronaut. Hanks is a member of the National Space Society, serving on the Board of governors of the nonprofit educational space advocacy organization founded by Wernher von Braun.[140] He also produced the HBO miniseries From the Earth to the Moon about the Apollo program to send astronauts to the moon. In addition, Hanks co-wrote and co-produced Magnificent Desolation: Walking on the Moon 3D, an IMAX film about the moon landings.[141] Hanks provided the voice-over for the premiere of the show Passport to the Universe at the Rose Center for Earth and Space in the Hayden Planetarium at the American Museum of Natural History in New York.[142]
+
+In 2006, the Space Foundation awarded Hanks the Douglas S. Morrow Public Outreach Award,[143] given annually to an individual or organization that has made significant contributions to public awareness of space programs.[144]
+
+In June 2006, Hanks was inducted as an honorary member of the United States Army Rangers Hall of Fame for his accurate portrayal of a captain in the movie Saving Private Ryan; Hanks, who was unable to attend the induction ceremony, was the first actor to receive such an honor. In addition to his role in Saving Private Ryan, Hanks was cited for serving as the national spokesperson for the World War II Memorial Campaign, for being the honorary chairperson of the D-Day Museum Capital Campaign, and for his role in writing and helping to produce the Emmy Award–winning miniseries, Band of Brothers.[145] On March 10, 2008, Hanks was on hand at the Rock and Roll Hall of Fame to induct The Dave Clark Five.[146]
+
+Hanks is a collector of manual typewriters and uses them almost daily.[147][148] In August 2014, Hanks released Hanx Writer, an iOS app meant to emulate the experience of using a typewriter; within days the free app reached number one on the App Store.[149][150]
+
+Writings
+In November 2014, Hanks said he would publish a collection of short stories inspired by his typewriter collection.[151] The book, Uncommon Type, was published in 2017.
+
+Uncommon Type (New York: Knopf, October 17, 2017)[152]
+Legacy
+Hanks is perceived to be amiable and congenial to his fans. He has frequently been referred to as "America's Dad".[153] In 2013, when he was starring in Nora Ephron's Lucky Guy on Broadway, he had crowds of 300 fans waiting for a glimpse of him after every performance. This is the highest number of expectant fans post-show of any Broadway performance.[154]
+
+Hanks is ranked as the fourth highest all-time box office star in North America, with a total gross of over $4.5 billion at the North American box office, an average of $100.8 million per film.[3] Worldwide, his films have grossed over $9.0 billion.[155]
+
+Asteroid 12818 Tomhanks is named after him.[156]
+
+As of January 2019, Hanks is currently voted #1 on Ranker's "The Best Actors in Film History".[157]
+
+Awards
+Main article: List of awards and nominations received by Tom Hanks
+
+Hanks receiving the 2016 Presidential Medal of Freedom
+2006: Douglas S. Morrow Public Outreach Award
+2014: Kennedy Center Honors Medallion
+2016: Presidential Medal of Freedom[158]
+2016: French Legion of Honor, for his presentation of World War II and support of World War II veterans, along with Tom Brokaw, retired NBC anchor, and Gordon H. Mueller, president and co-founder of the National WWII Museum, New Orleans.[159]
+Other recognition
+Hanks was the guest on BBC Radio 4's Desert Island Discs (in the footsteps of John Huston, Arthur Rubinstein, Luciano Pavarotti, and more than 2500 other celebrities who were 'castaways' (guests on the show) since 1942) on May 8, 2016, giving a 45-minute interview with insights into his personal life and career.[160][161]
+
+Bridge of Spies is a 2015 historical drama film directed and co-produced by Steven Spielberg, written by Matt Charman, Ethan and Joel Coen and stars Tom Hanks, Mark Rylance, Amy Ryan, and Alan Alda. Set during the Cold War, the film tells the story of lawyer James B. Donovan, who is entrusted with negotiating the release of Francis Gary Powers—a U.S. Air Force pilot whose U-2 spy plane was shot down over the Soviet Union in 1960—in exchange for Rudolf Abel, a convicted Soviet KGB spy held under the custody of the United States, whom he represented at trial. The name of the film refers to the Glienicke Bridge, which connects Potsdam with Berlin, where the prisoner exchange took place. The film was an international co-production of the United States and Germany.[6]
+
+Bridge of Spies was shot under the working title of St. James Place. Principal photography began on September 8, 2014, in Brooklyn, New York City, and the production proceeded at Babelsberg Studios in Potsdam. The film was released by Touchstone Pictures on October 16, 2015, in the United States and distributed by 20th Century Fox in other countries.[7] It was a box office success, grossing $165 million worldwide, and was praised for its screenplay, Hanks and Rylance's performances, Spielberg's direction, musical score, and production values. The film received six Academy Award nominations including Best Picture and Best Original Screenplay, and won Best Supporting Actor for Rylance.
+
+In 1957 New York City, Rudolf Abel is arrested and charged with spying for the Soviet Union. Insurance lawyer James B. Donovan is prevailed upon to take on the unenviable task of defending Abel, so that Abel's trial will be seen as fair. Committed to the principle that the accused deserves a vigorous defense, he mounts the best defense of Abel he can, declining along the way to cooperate in the CIA's attempts to induce him to violate the confidentiality of his communications with his client.
+
+Abel says Donovan reminds him of a friend of his father's who used to visit; "Watch this man," his father said. When State thugs came in and beat his parents and this friend, the friend kept getting to his feet; "Stoikiy muzhik", they said – "Standing man" – and let him live.
+
+Abel is convicted, but Donovan convinces the judge to spare Abel the death penalty because Abel had been serving his country honorably, and he might prove useful for a future prisoner exchange; Abel is sentenced to 30 years. Donovan appeals the conviction to the Supreme Court based on the lack of a search warrant for the seizure of Abel's ciphers and photography equipment. For his principled stand Donovan and his family are harassed, including shots being fired at their home. The conviction is upheld.
+
+In 1960, Gary Powers, a pilot in the CIA's top secret U-2 spy plane program, is shot down over the USSR. He is captured and sentenced in a show trial to ten years confinement, including three years in prison.
+
+Donovan receives a letter from East Germany, purportedly sent by Abel's wife, thanking him and urging him to get in contact with their lawyer, whose name is Vogel. The CIA think this is a back-channel message hinting that the USSR is willing to swap Powers for Abel. They unofficially ask Donovan to go to Berlin to negotiate the exchange; he arrives just as the Berlin Wall is going up. Crossing in to East Berlin, he meets with a KGB officer in the Soviet Embassy and is then directed to Vogel, who represents the Attorney General of the German Democratic Republic (GDR). The Attorney General seeks to swap Abel for an American graduate student named Frederic Pryor, who had been arrested in East Germany; in the process the GDR hopes to gain official recognition by the United States.
+
+The CIA wants Donovan to forget about Pryor but he insists that both Pryor and Powers be swapped for Abel. In a message to the Attorney General he bluffs that they will either release Pryor with Powers or there will be no deal.
+
+The exchange of Powers and Abel takes place at the Glienicke Bridge, with Pryor to be released simultaneously at Checkpoint Charlie. Donovan asks Abel what he thinks will happen upon his return to the Soviet Union; Abel answers that his fate – whether he is to be welcomed back as a hero or shot as a traitor – will be obvious from whether he is embraced by the Soviet agents at the end of the bridge or simply shown into the back seat of a car.
+
+There is a tense wait for word of Pryor’s release at Checkpoint Charlie. The CIA, still primarily concerned with Powers, tell Abel he can go, but he turns to Donovan and says "Stoikiy muzhik" – "Standing man" – and refuses to move.
+
+The bluff is successful. It is confirmed that Pryor has been released, and the exchange takes place. Donovan watches as Abel is received by the Soviet agents; he is shown into the back of a car without embrace.
+
+The next day, back in the United States, the government publicly acknowledges Donovan for negotiating the deal that rehabilitates his public image.
+
+Cast
+Tom Hanks as James B. Donovan
+Mark Rylance as Rudolf Abel
+Scott Shepherd as Hoffman
+Amy Ryan as Mary Donovan
+Sebastian Koch as Wolfgang Vogel
+Alan Alda as Thomas Watters Jr.
+Austin Stowell as Francis Gary Powers
+Billy Magnussen as Doug Forrester
+Eve Hewson as Carol Donovan
+Jesse Plemons as Joe Murphy
+Michael Gaston as Agent Williams
+Peter McRobbie as Allen Dulles
+Domenick Lombardozzi as Agent Blasco
+Will Rogers as Frederic Pryor
+Dakin Matthews as Judge Mortimer W. Byers
+Burghart Klaußner as Harald Ott
+Mikhail Gorevoy as Ivan Alexandrovich Schischkin
+Stephen Kunken as William F. Tompkins
+Noah Schnapp as Roger Donovan
+Production
+Development
+Bridge of Spies is an American-German co-production based on a script written by the Coen Brothers and Matt Charman.[8][9] Studio Babelsberg co-produced and oversaw production services for the film.[10] James Donovan wrote an account of the incident in 1964 under the title Strangers on a Bridge: The Case of Colonel Abel and Francis Gary Powers.[11] The historical background to the U-2 incident and the story of former West Berlin CIA chief William King Harvey and Operation Gold was published in Rory MacLean's Berlin: Portrait of a City Through the Centuries (2014).[12] Soviet intelligence officer Rudolf Abel, who lived and operated in Brooklyn Heights, did dead drops of stolen documents in Prospect Park. His arrest and history were discussed by Truman Capote, another Heights resident at the time, in his book A House on the Heights.
+
+Matt Charman became interested in Donovan's story after reading a footnote about him in An Unfinished Life: John F. Kennedy, 1917–1963.[13] After meeting with Donovan's son in New York City, Charman pitched the story to several studios and DreamWorks bought it. Studio co-founder Steven Spielberg became interested in the film and decided to direct.[14] Marc Platt and Kristie Macosko Krieger attached themselves as producers along with Spielberg. Joel Coen and Ethan Coen revised Matt Charman's original script.[15] According to Charman, the brothers "were able to really punch up the negotiations on the back end of the movie, then they handed the baton back to me to do a pass after they did their pass, to make the movie just sit in a place we all wanted it to. The flavor they brought is so fun and enjoyable. It needed to be entertaining but truthful."[13]
+
+In May 2014, it was announced that Tom Hanks would star as James Donovan, with Mark Rylance co-starring as Abel. Amy Ryan, Alan Alda, Billy Magnussen, and Eve Hewson were reported to star in the film as well.[16][17] Participant Media co-produced the film.[18] Francis Gary Powers, Jr., founder of The Cold War Museum and the pilot's son, was brought on as a technical consultant and has a cameo in the film.
+
+In June 2014, Fox 2000 Pictures agreed to co-finance the film with DreamWorks and Participant Media, with the film's distribution rights being divided between Disney and Fox.[19] During a March 3, 2015, interview with The Daily Pennsylvanian, Platt revealed the title to be Bridge of Spies; it was shot under the working title of St. James Place.[20] The film also received funds of €3.7 million, from the German Federal Film Fund (DFFF).[21]
+
+Filming
+Principal photography began on September 8, 2014, in Brooklyn, New York City.[22] On September 14, filming took place in DUMBO, a Brooklyn neighborhood, where crews transformed Anchorage Street to appear as it did in the 1960s.[23][24] On September 15, filming took place in Astoria, between Astoria Park and Ditmars Boulevard. Filming was done on 18 Street and 26 Avenue in Astoria, where Spielberg was spotted transforming the 5 Corners Deli into a 1950s grocery store.[25][26][27] On September 26, filming took place on 44th Street in Manhattan, as evidenced by crews stationed on 44th Street, between Madison and 6th Avenues. On September 27, Hanks was spotted filming scenes on Wall Street among extras wearing 1960s costumes.[28] On September 28, filming of some day and night scenes took place on the corner of Henry Street and Love Lane in the Brooklyn Heights neighborhood of Brooklyn, where the block was set with vintage cars, street signs, rain machines, and spotlights.[29] On September 29, filming took place on Hicks Street and Pineapple Street, where a shop, Perfect Paws, was transformed into a 1960s dress shop named Brooklyn Pearl,[30] and at the NYS Appellate Division courthouse on Monroe Place and Pierrepont Street. On October 6, Hanks and the crew were spotted on the same location on Hicks Street.[31] The scene in the Court hallway in which Hanks, to Alda's consternation, announces his intention to appeal the guilty verdict, was filmed on the first floor on the Queens County Supreme Courthouse at 88-11 Sutphin Blvd., Jamaica, New York.
+
+In early October, after filming wrapped in New York City, further production began at Babelsberg Studios in Berlin and Potsdam, Germany, and would last there through the end of November.[32][33] Filming in Berlin began with shooting at the former Tempelhof Airport in October, for scenes that actually took place there, such as Donovan's descending from an historic C-54 Skymaster.[34] The prisoner exchange scene was filmed on the Glienicke Bridge (the so-called "Bridge of Spies"), where the historical exchange actually took place in 1962.[35][36] The bridge spans the Havel narrows between Berlin and Potsdam, and was closed to traffic for filming over the last weekend of November.[37][38] German Chancellor Angela Merkel visited the set to watch the filming of these scenes.[39] Principal photography officially ended on December 4, at Berlin Tempelhof. Shooting also took place in Wrocław, Poland, in the second half of November.[32][40] During mid-December, filming took place at Beale Air Force Base, located near Marysville, California.[41] The film was shot on 35mm motion picture film, including Kodak Vision3 250D Color Negative Film 5207 and Vision3 500T Color Negative Film 5219.[42]
+
+
+Glienicke Bridge in Potsdam/Berlin during filming
+
+ 
+
+Period vehicles on Monroe Place in Brooklyn Heights during filming
+
+ 
+
+Sprinklers during filming in Brooklyn Heights
+
+Historical accuracy
+Bridge of Spies is based on the real-life events. The film, however, departs from the historical record, though reviewers have praised the film and argued that such departures are permissible.[43] Commentators have noted that the shortening of timespans in the film at times gives a misleading impression.[44][45] One key example is the depiction of the Berlin Wall. Donovan did not see Berlin wall escapees being shot; the shootings most similar to the ones depicted were those associated with the killing of Peter Fechter that happened the summer after the Powers/Abel exchange on the Glienicke Bridge.[44][45][46] Similarly, the circumstances of Frederic Pryor's detention were not accurately portrayed – he could not have crossed a partially built wall,[45][46] and further, was convicted of obtaining "confidential" material.[44]
+
+Apart from the depiction of the Wall, it is notable that Donovan did not suffer quite the extent of violence depicted: he was not shot at in his home,[44][45] and he did not have his overcoat stolen.[44] The film also changed the location of Donovan's suggestion to the judge to spare Abel for the sake of a possible future exchange, which was in fact made in open court.[43][45]
+
+Donovan is presented in the film as a private practice attorney with little connection to the government or the intelligence community. In reality however, during WWII Donovan served as the general counsel of the OSS, shortly before it was re-organized as the CIA.[47]
+
+Abel, an English-born Soviet intelligence officer (whose real name was William G. Fisher) most likely did his best work for the Soviet Union not as a spy in a dishevelled New York City lair full of radio gear, but before and during World War II, when he trained agents and radio operators for clandestine work in German-occupied regions. This training is thought to have been critical to what his mentor, Pavel Sudoplatov, later called one of the most important radio deception operations of the war.[48]
+
+Frederic Pryor stated in an interview that various details of the plot related to his involvement were incorrect. He did not cross the Berlin wall during its construction, as he was on vacation in Denmark at the time. He was detained after his return, when he crossed into East Berlin to visit a friend's sister; she had fled to West Berlin using "some sort of passport manipulation", and her apartment was under surveillance to catch anyone attempting to retrieve its contents.[49] Pryor also stated that the film's depiction of Wolfgang Vogel was unfair.[49]
+
+It is implied that Abel will be shot, since he has not been welcomed. He actually lived on for many years, dying in 1971 at the age of 68. And he had been hailed as a hero in the Soviet press. [50]
+
+The film depicts the shooting down of Powers' U2 plane as occurring after a single volley of three SAMs, however, more than 14 were launched. A MiG-19 fighter that was scrambled to intercept the plane was also shot down by friendly fire during this salvo, killing the pilot Sergei Safronov.[51]
+
+Release
+The theatrical poster for the film was released on June 4, 2015,[52] with the first trailer appearing online the following day.[53] It was distributed in North America by Walt Disney Studios Motion Pictures, through the Touchstone Pictures banner.[54][55] Disney held the film's world premiere on October 4, 2015[56] at the 53rd annual New York Film Festival.[57][58] The film went into general theatrical release in the United States on October 16, 2015.[59] 20th Century Fox distributed the film in the remaining international territories.[54]
+
+Home media
+The film was released by Touchstone Home Entertainment on Blu-ray, DVD, and digital download in North America on February 2, 2016 and by 20th Century Fox Home Entertainment in other territories.
+
+Reception
+Box office
+Bridge of Spies grossed $72.3 million in North America and $93.3 million in other territories for a worldwide total of $165.6 million, against a budget of $40 million.[5]
+
+In the United States and Canada, pre-release tracking predicted Bridge of Spies to open to around $15–20 million from 2,811 theaters.[60][61] The film opened alongside Goosebumps, Crimson Peak, and Woodlawn on October 16, 2015, facing particular competition from the former, and also from The Martian, which was entering its third week.[62] The film made $500,000 from its early Thursday night showings and $5.3 million on its first day.[63][64] In its opening weekend, the film grossed $15.4 million, finishing third at the box office behind Goosebumps ($23.5 million) and The Martian ($21.5 million).[65] Its biggest international markets have been Italy ($12.1 million) and United Kingdom (11.0 million).[66]
+
+Critical response
+Bridge of Spies received critical acclaim. Richard Roeper of Chicago Sun Times gave the film four out of four stars and praised Spielberg's direction, saying: "Spielberg has taken an important but largely forgotten and hardly action-packed slice of the Cold War and turned it into a gripping character study and thriller that feels a bit like a John Le Carre adaptation if Frank Capra were at the controls".[67] Michael Phillips of the Chicago Tribune called the film a "a confident, slightly square, highly satisfying example of old-school Hollywood craftsmanship, starring a major movie star brandishing a briefcase, and a handkerchief, rather than a pistol".[68] The A.V. Club's Ignatiy Vishnevetsky described it as "one of the most handsome movies of Spielberg's latter-day phase, and possibly the most eloquent [...] Bridge of Spies turns a secret prisoner exchange between the CIA and the KGB into a tense and often disarmingly funny cat-and-mouse game".[69]
+
+On the other hand, Mike Scott of New Orleans Times-Picayune, had a more mixed reaction, saying: "Bridge of Spies, with its stop-and-go momentum, is also more merely interesting than it is full-on riveting. It's still quite good stuff, but despite its impressive pedigree... it doesn't feel as if it's quite the sum of all of its parts".[70] Preston Jones of Fort Worth Star-Telegram gave the film 2 and a half stars out of five. Jones wrote that "For all Spielberg, his star-packed cast, led by Tom Hanks, and his on-screen and off-screen team (Joel and Ethan Coen co-wrote the screenplay) bring to the table, Bridge of Spies is remarkable only for how stuffy and surprisingly inert the film becomes".[71]
+
+On Rotten Tomatoes, the film has a rating of 91%, based on 283 reviews, with an average rating of 7.7/10. The site's critical consensus reads, "Bridge of Spies finds new life in Hollywood's classic Cold War espionage thriller formula, thanks to reliably outstanding work from Steven Spielberg and Tom Hanks".[72] On Metacritic, the film has a score of 81 out of 100, based on 48 critics, indicating "universal acclaim".[73] On CinemaScore, audiences gave the film an average grade of "A" on an A+ to F scale.[65]
+
+Accolades
+Main article: List of accolades received by Bridge of Spies (film)
+
+Homepage
+Human Parts
+BODYMINDHEARTHANDSEYESSOULSMILE
+Three Magical Phrases to Comfort a Dying Person
+We will all face painful moments sitting next to dying people. What can we say?
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 10
+
+Photo: gorodenkoff/Getty Images
+
+At 3 p.m. on a Monday afternoon, death announced it was coming for him. He was only eight years old; his cancer cells were not responding to treatment anymore. His body’s leukemic blast cell counts were doubling daily. Bone marrow was no longer making red or white blood cells, not even platelets. The marrow was only churning out cancer cells. In a process similar to churning butter, his blood was thickening with homogenous, malicious content: cancer. And like churning butter, it was exhausting work. The battered remnants of his healthy self were beaten down by chemo. And yet, every fiber pressed on.
+
+He was so very tired. You could see it in his eyes. At the same time, you could see his love. His love for life was front and center. His love for sweetness crystalized on his tongue in the taste of sun-soaked strawberries. His love for satisfaction could be heard in the snapping sound of a puzzle piece set in place. His love for the simple, soothing smells of lavender emanating from a medicine ball was cherished, as was the fact that he could still hold a ball in his hands. He loved life down to the core, as only an eight-year-old can, and he was doing everything he could to stay alive.
+
+Death was easy to detect. It was right under our eyes, sending the simplest of signals. No appetite. Breathing strained. Cold hands and feet, meaning compromised blood flow. Ankles swollen. Standing up was becoming nearly impossible. His body was shutting down. But it was his temperature that told us the landslide of disease was accelerating and about to swallow us whole.
+
+At 3 p.m. on a Monday afternoon, his temperature was 107.2 degrees.
+
+Doctors and nurses clustered outside of his hospital room. The cluster grew. The murmurs increased. My concern intensified. We had spent enough time at the hospital to know when a situation was escalating. I was not surprised when I was quietly summoned out of the room. As the sliding door closed behind me, I found myself in the center of the humming cluster. Bustling, shuffling chaos encircled me. The attending oncologist, at the center of the group, was serious and quiet. She said in a low voice, “Your son is dying. He likely won’t live through another two hours. He won’t make it through the night.”
+
+
+My eight-year-old asleep with his favorite blanket and pillow. Photos: Jenny Harrington
+Tackled by shock, I couldn’t breathe. I had quarterbacked nearly two years of his cancer treatment. I knew every player and every play. He had an all-star team from the start. Yes, we’d been on the defensive since his leukemic cancer relapse. I fought furiously to get him on a (supposedly) life-saving immunotherapy trial, in which his own immune cells were reprogrammed to attack and destroy cancer cells. Chimeric antigen receptor T cells (CAR T cells) had been his Hail Mary treatment 12 days ago. Now, we were waiting and watching, at the edge of our seats and hospital bed, for them to work their magic. CAR Ts for the win! Wait. Was I hearing, amidst the chaos in the hallway, that our miracle CAR T therapy had failed? Yes. The ball had been fumbled, we were out of plays, and time was up. I was told, “Your son is dying.”
+
+There was one person who would be more shocked than me.
+
+Choking back tears, I took a deep breath, held onto that gulp of air and went back into the room to sit next to my imminently dying child.
+
+Without a breath, I pushed out the words, “We need to talk.”
+
+What do you say to a dying person?
+
+
+A few weeks earlier, on another Monday afternoon, I was lying in bed with my son. It was back before his body hurt too much to be touched. Back when I could still curl up in his hospital bed with him. I whispered, “I love you,” as I often did.
+
+He said, “I know.”
+
+Of course he knew. He knew everything I did was for him. Our beloveds know we love them. We say it. They see it. They know. So, what more can we say? What words can we give them when there is nothing left but words? Especially when words seem like they are failing. And words do fail.
+
+There are no words for the time your eight-year-old dies in your arms. Even if there were (and, I promise you, there aren’t), most people will not need them because most people will never be in that situation, unimaginable as it is.
+
+But most of us will face other painful moments sitting next to a dying person. How do I know this? Because our mortality rate is 100 percent. One day, we will all be a dying person. And before that, we may be close to several, or to many. We all need to know how to sit and talk through a time for which there are no words. A time when not even an “I love you” will suffice. How do we catch our future selves? How do we comfort our dying loved ones now?
+
+I slowly let out my held-in breath and said, “I am so sorry to tell you this, but you are going to die.”
+
+“Wait — what? I don’t want to die!”
+
+He was stunned, furious. His big, crystalline-blue eyes widened. Maybe it was his soft, bald head and the lashless lids framing those eyes, but his blue eyes were all I could see. Added to the mix of love and fatigue, I now saw fear. My mind went on a frantic race to find the right words to cradle and calm him.
+
+There are no magic words that can catch and carry and keep a person crossing into the end zone. Words cannot keep a loved one from dying.
+“I am so sorry. I know. But we are all going to die whether we want to or not. I am going to die. Dad is going to die. We are all going to die and we don’t have any control over it. I am so, so sorry.”
+
+“When am I going to die?” he asked. He was, as always, curious and thinking things through.
+
+“I don’t know, but soon.”
+
+“What?!”
+
+Anger and disbelief bubbled back up. Does it come as any surprise that he was more shocked than I to hear the news he would be dying soon? He was a child; he believed us with magical wonder when we told him he would get better. Just like he believed us when we promised the Tooth Fairy would exchange his lost tooth for a gift if he tucked it under his pillow. We had assured him he would get better. He had done everything asked of him — every difficult, painful, nauseating thing. And now, my sweet, darling, silly monkey and I were staring wide-eyed at each other, with 100 percent mortality in between.
+
+Delivering this message was the hardest thing I’ve ever had to do. But I had to stay calm and say more. I had to find impossible words — words that would bridge the gap between life and death and make his predicament palatable. Three phrases welled up that became a touchstone for us in the days that followed. I call them “three magic phrases to comfort a dying person” now. At the time, they were a lifeline of connection for the two of us and for the rest of our family.
+
+Here is what I said to my distressed, dying child, as lovingly and reassuringly as possible: “You will not be alone. You will not feel pain. We will be okay.” He needed each of these phrases more than “I love you.”
+
+1. “You will not be alone.”
+Letting him know you will not be alone was important because he was human — a social, silly, lovable animal. As the youngest of our four children, he was accustomed to chatter and chaos. From birth, he was playful and craved connection. That’s why he would crawl in bed with me in the middle of the night or ask me to play a game of Sorry or wait patiently for me to read him a story. He especially craved company when he was scared, like on the first day of preschool.
+
+The first day was only an hour long. The children traced their names on nametags, listened to a story on the rug, and did a craft project. He stayed tucked between my legs, clinging to them when not focused on an activity. Preschool was going to be a blast and he’d make the best of friends, but he didn’t know this yet. All he knew was that everything was new and it scared him.
+
+Fast-forward to this Monday afternoon when he had just been informed he was going to die. He was heading into the biggest and most unknown of all experiences. He needed to hear he would not be alone.
+
+2. “You will not feel pain.”
+My child had endured a tremendous amount of pain over the past two years. The pain of pressure building up from inside his bones, blooming cancer cells ready to burst out, was one of the first signs. One day, it was suddenly too painful for him to walk. Then there was the pain of treatment, with its constant needle pokes for blood draws, bone marrow biopsies, and spinal taps. Headaches, nausea, and general malaise — having cancer was a literal pain. Not to mention the social and emotional suffering. You will not feel pain was important because he needed to hear that although we could no longer contain the cancer, we could soothe his nerves.
+
+3. “We will be okay.”
+Saying we will be okay was the most important, and the hardest, of the Three Magic Phrases. I simply didn’t believe it. I had a clasping, nearly crushing hold on hope up until the very moment I heard, “Your son is dying.” I thought he would pull through and somehow live the long, glorious, trouble-free life that he deserved. How could I ever hold hope close again? Saying we will be okay was saying the impossible. We are not okay without him. But I had to say it, for him.
+
+He cared deeply about others. If I asked, “What movie do you want to watch?” He would often answer, “Whatever movie you want to watch.” In third grade, he had an assignment to choose a cause to support. He chose cancer and he said this cause was meaningful to him because “I want everybody to stay healthy and because I have it [cancer] and I want everyone and myself to get better.” Even in the face of his own mortality, with a life-threatening illness, he was thinking of others. He would not be okay unless he knew we were okay. He loved us beyond measure. We did our best to love him back the same amount.
+
+
+He did not die in the two hours that followed. We called in our closest circle and Skyped with family and friends far away. A beloved babysitter brought in a guitar. The curved, wooden instrument was unclasped from its case. Strummed music floated through the room like butterflies. We sang. Best pals dealt Uno cards. We poured butterbeer, the type Harry Potter would order on a trip to Hogsmeade, into waxed paper cups, passed them out and toasted, “To Ewan!” The hospital even allowed his puppy to come in for a little tail-wagging and a few wet kisses.
+
+Friends left and night descended. Dad and I tucked in next to him, dimmed the lights and read from Harry Potter and The Half-Blood Prince. I didn’t sleep. Miraculously, he didn’t die that night.
+
+
+On the other side.
+What followed was a memorable week of playdates and parties. Out-of-town family and friends flew in. We enjoyed an enormous circus-themed party on the hospital’s garden rooftop. There were acrobats, a magician, and a band made of talented elementary school music teachers. His friends wore Hogwarts robes and superhero costumes. Everyone ate chocolate cake, sang, danced, and celebrated his life like there was no tomorrow.
+
+All week long, I repeated, “You will not be alone. You will not feel pain. We will be okay.”
+
+There are no magic words that can catch and carry and keep a person crossing into the end zone. Words cannot keep a loved one from dying. The morphine drip increases in strength and frequency. Exactly one week later, holding my hand, he died. I died that day, too. There are no words that fill in for his silenced silly and cherished company. I feel incredibly alone. It is unimaginably painful. That’s when I repeat the Three Magic Phrases in reverse order. We will be okay. You will not feel pain. You will not be alone. I feel myself caught in the arms of my beloved child. Now, I am not alone. Then, the pain eases. I will be okay. This is the beauty of the Three Magic Phrases: dying people live on as long as we go on remembering them, and repeating the phrases we said to them is a very direct connection. Our loved ones catch us, daily, and keep us going. And in turn, when it’s our time, I hold onto hope that we too will find comfort in a few magic phrases.
+
+DeathLoveHealthParentingHeart
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Author, researcher, mother living on an island near Seattle. Now, notably, an international bunny smuggler. Find her struggles and snuggles at www.teamewan.com
+
+Human Parts
+Human Parts
+What it means to be.
+
+More from Human Parts
+A Gentlemen’s Guide To Rape Culture
+Go to the profile of Zaron Burnett III
+Zaron Burnett III
+May 29, 2014
+More from Human Parts
+Coming Out as Biracial
+Go to the profile of Stephanie Georgopulos
+Stephanie Georgopulos
+Oct 21, 2013
+More from Human Parts
+The Girl at the Bar
+Go to the profile of Snippets
+Snippets
+Oct 15, 2017
+Responses
+Amit Singh
+Write a response…
+Amit Singh
+Conversation with Jenny Harrington.
+Go to the profile of Jacqueline Dooley
+Jacqueline Dooley
+Mar 12
+I’m so sorry. Thank you for sharing these much-needed words of advice. Your story is heartbreaking and honest…and all-too familiar. My last words to my daughter were, “It’s okay to go.” I think that helped her let go just as your loving words helped your son.
+
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 12
+“It’s okay to go.” Heartbreaking. Our loved ones love us so much they want our permission. Bravo for being able to give big, beautiful motherly acceptance — so much grace right there.
+
+Conversation with Jenny Harrington.
+Go to the profile of Midge James
+Midge James
+Mar 12
+Thank you for such a poignant and heartbreaking story. Thank you for your courage in telling your son he was dying. Thank you for raising such a splendid soul for all of his 8 years. Thank you for your courage and vulnerability.
+
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 13
+Thank you for reading and being willing to remember him with me.
+
+Conversation between Peter Boyd and Jenny Harrington.
+Go to the profile of Peter Boyd
+Peter Boyd
+Mar 15
+This is one of the most beautiful pieces of writing on death that I’ve ever read — and I’ve read a few since we lost our Dad to cancer a little over two years ago. I clicked on the link thinking “I have a couple of minutes between tasks and would love to have those three phrases in my backpocket” as I didn’t think I had them to hand when I said…
+
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 16
+“You can smile because they lived” wow, Peter, the David Harkin’s poem adaptation is powerful. Ewan had the brown blanket pictured since birth. Oddly, his oncologist’s 8-year-old had the exact same blanket. The HP pillow had been brought back from London by one of his friends. We were going to take him to London, last summer, before he relapsed. I’ve…
+
+Conversation with Jenny Harrington.
+Go to the profile of Scott Selliers
+Scott Selliers
+Mar 15
+I was just reading this in bed while laying next to my wife; I was crying hard enough that I had to sneak out of the room for fear of waking her and having to explain. I just came back into the house after turning your words over in my mind while out on the porch listening to the wind and spring frogs. On the way to write this response to you and…
+
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 15
+I hear the wind and spring frogs. We were lucky/unlucky enough to be able to ask Ewan what signs he would give us that he is still here. A sunset, a rustle of leaves through the wind, a rainbow, a moth by the door…? He only smiled. I think of it as a hidden pictures game he is playing- it’s my job to seek and be open to his constant connection…
+
+Conversation with Jenny Harrington.
+Go to the profile of Sanjiva Weerawarana
+Sanjiva Weerawarana
+Mar 15
+Thank you for writing this.
+
+I lost my father exactly 3 months ago today and I was there with him but didn’t know what to say as he was dying, nor could I voice any words.
+
+You’re incredible for what you did.
+
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 15
+Thank you for your kind words. Today, someone said to me “even when we don’t say anything we are still communicating.” Its beautiful and true. It might be, “I don’t know what to say” or “this moment is too big for words” but you were there. Your presence said all that was needed.
+
+Conversation with Jenny Harrington.
+Go to the profile of Kathy Hussey
+Kathy Hussey
+Mar 15
+Saying we will be okay was the most important, and the hardest, of the Three Magic Phrases. I simply didn’t believe it. I had a clasping, nearly crushing hold on hope up until the ve...
+As a Mother of 4, now adult, children I can only imagine how completely impossible it was for you to say to your son “We will be okay.” Yet you said it, and not once, but many, many times that week. I am utterly in awe of your strength and love for your child .That you were able to set aside your own needs at that moment, and during the next week to…
+
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 15
+You know what its like when you love someone way, way more than yourself. He made it so easy to love him that way. The day before he died — I can’t begin to describe how dire and sick his condition was, and yet, he played catch with his four-year-old cousin using a large bouncy ball, the $2 kind from the grocery store. He smiled and was having fun…
+
+Conversation with Jenny Harrington.
+Go to the profile of Dr. Jerry Green
+Dr. Jerry Green
+Mar 14
+I can appreciate your view. I also appreciate “as long as there is life there is hope”. From Stephen Hawkings who lived with ALS for many years. Reversals, rallies, cures, new treatments, alternative treatments, recoveries.
+
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 15
+That’s a poignant point of view. We never ever gave up. Even on his last night, I insisted they give him his second treatment of Inotuzumab. We hoped for a miracle and held hands just in case one didn’t come through.
+
+Conversation with Jenny Harrington.
+Go to the profile of Concepcion Gasang
+Concepcion Gasang
+Mar 14
+Thank you for sharing your story. It will really help when time comes for us in the same situation. You are courageous!
+
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 15
+Thank you for your kind, thoughtful words.
+
+Conversation with Jenny Harrington.
+Go to the profile of Romario Eichlig
+Romario Eichlig
+Mar 16
+I waited for a plot twist and didn’t come so now my night is ruined…
+
+Anyway, I’m here to congratulate for how “dutiful” you were those last; as someone with a high cancer risk ratio, I’m often caught thinking how I’ll help others deal with it more than I’d would deal with cancer itself, so the phrase “we’ll be ok” made…
+
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 16
+I waited right with you and hoped and bargained and wailed… mine’s ruined, too. And every night since. Now, when I smile or crack a joke or light up inside for even a minute, I feel off. We won’t be great, but we might be ok. Thank you for your honest words. They somehow help.
+
+Conversation with Jenny Harrington.
+Go to the profile of kat kilcullen
+kat kilcullen
+Mar 15
+I feel grateful to have read this, to you for using your gifts to so beautifully capture and share these moments with us. I will hold your words with me. Thank you. This is is a story I choose to keep.
+
+Go to the profile of Jenny Harrington
+Jenny Harrington
+Mar 16
+I am honored. Thank you for reading and remembering Ewan.
+
+3
+2
+1
+Read smarter, not harder.
+
+
+
+Why I Deleted All My Social Media Accounts
+Sometimes there’s an upside to a public meltdown
+Go to the profile of Felicia C. Sullivan
+Felicia C. Sullivan
+Mar 6
+
+Illustration: osker14/Getty Images
+
+Some people are built to break. Others know how to collect the pieces and rebuild. Often I exist in the space between the two.
+
+Last year, I deleted Facebook. A few weeks ago, I retired my Instagram account. Recently, I deleted my Twitter account, where I had nearly 6,000 followers. Peers are apoplectic because who deletes their social media? Friends wonder how I’ll keep up with them, and more importantly, what will I do without Facebook alerting me of their birthdays? Apparently, these are very important questions. The questions of our time.
+
+A friend tells me I’ve isolated myself—what she doesn’t understand is that the act of removing the social burdens we bear is fucking liberating.
+
+Maybe we should ask ourselves: When did we become lazy in our relationships? When did we start relying on platforms that own our information to do the work of conversation and connection? When did it become abnormal to not have a social media presence?
+
+Honestly, I’ve grown tired of measuring the depth of my connection with the world based on how I was posting carefully curated and edited information about my life. People bemoan the fakeness of social media in pursuit of the real, but they don’t actually want real. More positivity in posts means higher follower counts; people want to follow those who don’t share much negativity, and that’s a fact. Funny how we talk about the plastic nature of social media as if it were a thing removed from us. As if social media were an entity we didn’t actively shape and participate in. As if we aren’t the people perpetuating this false reality—regardless whether we’re conscious of it.
+
+The knowledge that people saw my pain and didn’t seem to care enough to reach out was worse than the actual cause of my anxiety.
+Because everyone loves a happy ending, a triumphant comeback story.
+
+I’m good at using language to disguise my wounds. I’ve spent the greater part of 35 years talking about how love and loss are flip sides of the same coin. The line between the two is indecipherable. I published two books about women who lived in a constant state of dressing their wounds. I write essays that are cryptic and poetic and people clap and say, “damn that was pretty,” before they up and leave.
+
+Depression is tricky for someone like me who’s obsessed with control. Once I think I have my illness figured out, it changes form. Often, I exist in the space between being frightened of death and welcoming it. I hate flying on planes and riding in fast cars, but I’ll warm to the weight of 30 or 40 pills in my hand before I slide them back in the bottle.
+
+
+I saw a post in a hate forum about a friend I know. We are acquaintances who share a certain level of intimacy because we’ve courted death and can speak plainly about it. We trade bad jokes about suicide and laugh because it’s a way of coping, a way of setting down the weight that threatens to swallow us whole. And the people with their anonymous and clever usernames cut into her because of how she handled seeking treatment for her illness. She wasn’t supposed to say anything on social media—she wasn’t supposed to speak at all. She was supposed to disappear and deal with it because that’s how they would have handled it.
+
+People who aren’t sick would have us stay silent if they had their way, and yet out of the other side of their mouths, they’ll prattle on about “breaking the stigma” and wishing that people who suffer would “get the help they need.” Their empathy chorus is hollow and grating because they believe a binary exists—you either want to die or you don’t—and they see only a singular way of handling mental illness. Call the hotlines. Go offline. Seek therapy. Take your meds. Go to yoga. Collect crystals. Go on that juice diet everyone raves about. Or maybe keto? Be humble. Take your medicine. Don’t cry publicly. Don’t humiliate yourself. Tape your mouth shut. Swallow whatever voice you have left. Don’t complain about the people telling you to call the hotlines. Don’t get angry at the people who don’t know what to say, as if any of us should settle for scraps. Don’t let the healthy bear any of the weight of our sickness. Smile and speak in exclamation points! Use appropriate emojis.
+
+Don’t make the healthy feel uncomfortable because god-fucking-forbid.
+
+But here’s the reality: Those of us who are mentally ill are going to act mentally ill because we’re human and we hurt in the worst way. We aren’t going to make the best choices or know how to talk about our illness publicly because we’re human. And we’re forever existing under the burden of being instructed by those who are not ill on how to behave. They keep telling us how to live.
+
+And, oh, do we have to behave.
+
+
+Not too long ago, I posted a series of stories on my private Instagram. I had just recovered from an anxiety attack, returned from urgent care, and was heavily medicated. I talked about my stress in a series of videos and while hundreds of my “friends” watched them, only three actually reached out. The knowledge that people saw my pain and didn’t seem to care enough to reach out was worse than the actual cause of my anxiety.
+
+A few weeks later, I did the same on Twitter and was immediately ashamed. I knew why I did it—I wanted to open my mouth and scream but it felt as if no sound came out. I didn’t want to die, but the hurt was so palpable and constant. Our bodies are designed to handle only so much pain. What happens with the overflow? Where does the pain go? Are we forced to contain it until we shudder and burst? A few kind friends followed up and I was grateful for their love and friendship. Two reported my posts to Twitter, and I received a form letter about “reaching out” and “getting help” as if people who have depression don’t already know these things. The irony was that I was reaching out, but apparently, my pain was too much for others to witness. That form letter was yet another piece of duct tape affixed to my mouth. Others unfollowed me and didn’t care at all.
+
+I have work to do, but I’ve decided much of it is best done offline.
+Friendships are tenuous and their upkeep is hard. I realized that people’s tolerance for anxiety and depression comes with a best-by date.
+
+I’m in a much better place now because I deleted all of my social media and decided to do a lot of work offline. I’m keeping in touch with the people I care about without relying on social media to tell me the goings-on in their lives. Luckily, I don’t need social media for the kind of work I do, with the exception of possibly LinkedIn and my work accounts, all of which I’ll maintain for professional purposes. However, I’m deciding to keep a lot of my personal life offline with the exception of sharing the occasional essay and chatting with my newsletter subscribers.
+
+The act of being vulnerable, laying yourself out, is painful when the collective response is an uncomfortable silence. We all need to be honest with what we tolerate versus what we say we tolerate. Perhaps compassion has its limits. Granted, I have work to do, but I’ve decided much of it is best done offline.
+
+
+Right now, I’m not in danger. I don’t want to die, but I’ve wanted to not exist. I’ve wanted to fall out of the frame, curl up and recede. I wanted to say those words out loud because my body feels like a container and there’s only so much pain I can take before I burst and break. I want to feel less pain but that doesn’t necessarily mean I’m uncapping prescription pills with abandon.
+
+Yet any signs of mental illness and—snap—let’s report those posts so the depressed are greeted by form emails with numbers to call and websites to visit. As if people don’t already fucking know. As if so many of us don’t want to call the numbers just yet, but we just want to be seen and loved and unburdened of our unfathomable sadness. But—snap—let’s set off the five-alarm fires. Snap—let’s treat you like the spectacle you are, the “sick” person. The “crazy” person. Let’s usher out our condescending platitudes and you should reach out if you want help but we’ll shut you down when you reach out because god forbid we feel uncomfortable. God forbid we realize depression is more complicated than Twitter would have us believe.
+
+People with depression and mental illness are not sideshow attractions here for your hair-petting and amusement. If you don’t know how to deal with someone with depression, ask a professional. Open a browser and Google it. Put in some effort.
+
+We’re not here for your condescension. We’re not here to bear the weight of your myopic thinking, platitudes, and binary perception. We are here for your kindness, compassion, and support.
+
+We are here for one simple sentence: I love you, I care about you, and how can I help?
+
+Sign up for my newsletter.
+Mental HealthPsychologySocial MediaDigital LifeMind
+Go to the profile of Felicia C. Sullivan
+Felicia C. Sullivan
+Medium member since Jan 2018
+Published Novelist. Brand/Marketing Strategist. lovelifeeatny@gmail.com Newsletter: https://bit.ly/2WLyZmv Hire me: https://bit.ly/2UIadlm I have opinions.
+
+Human Parts
+Human Parts
+What it means to be.
+
+More from Human Parts
+A Gentlemen’s Guide To Rape Culture
+Go to the profile of Zaron Burnett III
+Zaron Burnett III
+May 29, 2014
+More from Human Parts
+Coming Out as Biracial
+Go to the profile of Stephanie Georgopulos
+Stephanie Georgopulos
+Oct 21, 2013
+More from Human Parts
+The Girl at the Bar
+Go to the profile of Snippets
+Snippets
+Oct 15, 2017
+Responses
+Amit Singh
+Write a response…
+Amit Singh
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Kofi Martin
+Kofi Martin
+Mar 7
+apoplectic
+Word choice = FIRE. Definitely had to look that up. /Extremely indignant./
+
+Conversation between Eric Sangerma and Felicia C. Sullivan.
+Go to the profile of Eric Sangerma
+Eric Sangerma
+Feb 28
+Thanks for writing this piece Felicia.
+
+I applaud you for opening up the way you did. We need more voices such as yours speaking against Social Media.
+
+Imagine the impact on fragile teenagers!!! I’ve got 2 kids (Ages 9 and 7) and there is no way I’m buying them a smartphone or letting them opening a social media account anytime soon
+
+Go to the profile of Felicia C. Sullivan
+Felicia C. Sullivan
+Feb 28
+Thanks, Eric! Have you read Cal Newport’s Digital Minimalism? It’s excellent and has great anecdotes about parents setting examples for their kids.
+
+Go to the profile of Eric Sangerma
+Eric Sangerma
+Mar 2
+Hi Felicia, I haven’t but it’s definitely on my list. I loved his previous book, Deep Work.
+
+Thanks again.
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Julia E Hubbel
+Julia E Hubbel
+Mar 8
+they don’t actually want real.
+Bingo. Because real and authentic tends to bring up what is real and authentic in ourselves. That is a well we have a terrible time peering into these days.
+
+Conversation between David Avitabile and Felicia C. Sullivan.
+Go to the profile of David Avitabile
+David Avitabile
+Mar 6
+Thank you Felicia. I feel exactly the same way. I deleted my Facebook account because I woke up one day and realised that the majority of my ‘friends’ were people from high school who I actually never liked in the first place. There’s also a culture of bullshit propagation that platforms like LinkedIn are infested with. The U.S. has installed a felon…
+
+Go to the profile of Felicia C. Sullivan
+Felicia C. Sullivan
+Mar 6
+Agreed! I think we can all use a little breathing room right now.
+
+Conversation between Tiffany Lopez and Felicia C. Sullivan.
+Go to the profile of Tiffany Lopez
+Tiffany Lopez
+Mar 2
+I’m good at using language to disguise my wounds.
+Wow. That statement was deep. I felt that one.
+
+Go to the profile of Felicia C. Sullivan
+Felicia C. Sullivan
+Mar 2
+Thanks, Tiffany! :)
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Anitra Root
+Anitra Root
+Mar 7
+Right now, I’m not in danger. I don’t want to die, but I’ve wanted to not exist
+Right to my heart with this, as boy oh boy have I been there. I couldn’t explain how I felt. This is it.
+
+Thank you!
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of vexboxx
+vexboxx
+Mar 7
+People who aren’t sick would have us stay silent if they had their way, and yet out of the other side of their mouths, they’ll prattle on about “breaking the stigma” and wishing that...
+And my absolute favourite: “Just cheer up!”
+
+Thanks, I hadn’t thought of that.
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Mitchell Jordan
+Mitchell Jordan
+Mar 7
+I am now going to delete my social media accounts, but not until I share this amazing article to explain why.
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Julia E Hubbel
+Julia E Hubbel
+Mar 8
+Don’t make the healthy feel uncomfortable because god-fucking-forbid
+This begs a question: if they ARE healthy (and by this I mean mentally, emotionally, spiritually) why is being uncomfortable a problem? Precisely. Nobody is lala all the time. We all carry sewage. We all bear scars. To deny them incites sickness. To get angry at others for making us look hard at ourselves is a symptom.
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Nikita Mélusine
+Nikita Mélusine
+Mar 7
+Wow. This was so raw. I get what you mean about people wanting you to “reach out”… But not being willing to extend a hand. Because they don’t know how. Because the second they catch a glimpse of your pain, they realize they don’t know how to deal with it.
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Koni Lightmaker
+Koni Lightmaker
+Mar 1
+act of removing the social burdens we bear is fucking liberating.
+Yes. It’s really good.
+
+Conversation between Ivan Galanin and Felicia C. Sullivan.
+Go to the profile of Ivan Galanin
+Ivan Galanin
+Feb 27
+Thank you for being so bold. Your imperfection is inspiring.
+
+Go to the profile of Felicia C. Sullivan
+Felicia C. Sullivan
+Feb 27
+Ivan,
+
+Thank you for your kind response and the read. I really appreciate it.
+
+Cheers, Felicia
+
+Go to the profile of Ivan Galanin
+Ivan Galanin
+Feb 27
+I mean it.
+
+For Christmas, my wife adopted two large dogs, brother and sister, victims of divorce. She thought that taking care of them would be good for me. The boy is easy to love. He listens better, doesn’t bark or whine, loves to run. The girl is difficult. She pees where she shouldn’t, whines, barks at the neighbors, has…
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Kofi Martin
+Kofi Martin
+Mar 7
+Their empathy chorus is hollow and grating because they believe a binary exists—you either want to die or you don’t—and they see only a singular way of handling mental illness.
+HOLLOW EMPATHY CHORUS. Okay? That shade was served with unlimited tea. Come through sistah-girl. READ.
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Anita Sophia
+Anita Sophia
+Mar 7
+Often I exist in the space between the two.
+🙋🏻‍♀️
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Blue Fences
+Blue Fences
+Feb 28
+I too, have cut my social platforms down to Medium. Congrats 💙
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Obinna Morton
+Obinna Morton
+Mar 7
+Wow. I gave you 24 claps. I’ve never done that. It was a heart-centered response. So….I don’t know you I know. So all the better — it’s kind of like a FB post you see of someone who does share something personal, a reach-out post and you still reply. I am a person who replies actually because I do know what it’s like to, as you said, share your pain…
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Sans Def
+Sans Def
+Mar 7
+Dont look back. I took the same sort of progression away from social media over the last two years and it’s just gotten better and better ever since. Best decision ever and now I have so much more space in my life.
+
+Less than a decade ago we had none of this in our lives. Once you step out you realise how abstract it all is.
+
+Applause from Felicia C. Sullivan (author)
+Go to the profile of Jeff Allen
+Jeff Allen
+Mar 7
+I talked about my stress in a series of videos and while hundreds of my “friends” watched them, only three actually reached out.
+I had the same experience when I posted a short story I wrote about my friend’s suicide. It was haunting to know that so few people really cared and couldn’t be bothered with reaching out. Social media has definitely reinforced our tendency to bury our heads in the sand when faced with the darker side of life.
+
+3
+2
+1
+0
+Some thoughts are worth more than a penny.
+
+
+Build a simple Twitter Bot with Node.js in just 38 lines of code
+Tutorials don’t have to be complicated. Together we’ll build a simple Twitter favorite bot with Node.js in just 38 lines of code.
+Go to the profile of Brandon Morelli
+Brandon Morelli
+May 30, 2017
+
+Twitter! via unsplash.me
+This is the first post in a multi-part series. In future posts, I’ll show you how to add more advanced functionality to our bot. For now, we’re going to build a very simple Twitter bot that favorites anyone who tweets about a certain subject.
+
+EDIT — Part 2 has been posted: Build a simple Node.js Twitter Bot Part 2: Do More. To stay up to date on future articles, please enter your email here if you’d like to be added to my once-weekly email list.
+Before we get started, all of the code for this tutorial can be found in my GitHub Repository
+
+Ready? Let’s do it. Here’s what we’re going to need:
+
+Twitter API: If you have a Twitter account, you can utilize the Twitter API. You can read the API Documentation here.
+Node.js: Visit the official Node.js website to download and install Node if you haven’t already. Looking for a more in-depth tutorial? Check out my Top Three Node.js courses.
+Twitter NPM: An NPM module that allows to easily interact with the Twitter API.
+Create an Application
+First thing’s first: The only reason this bot will work is because of the Twitter API. On the most basic of levels an API is simply a way for one program to interact with another. We’ll be creating a Node.js application that interacts with the Twitter API. In this application, the API will allow us to search for tweets, and favorite the tweets that our application finds.
+
+To use the Twitter API, we need some information! Head on over to the Twitter API and create a new application.
+
+
+Here’s what the page should look like.
+You’ll have to fill out some information, then look for the following information under the Keys and Access Tokens tab. You may have to click Generate Access Token to create your access token.
+
+Consumer Key
+Consumer Secret
+Access Token Key
+Access Token Secret
+
+Keys and Access Tokens
+Once you see these four pieces of information, you’re ready to move on to the next section.
+
+Configuration
+Now that we have the application information we need, lets set up our bot.
+
+Create an empty directory named twitter-bot and run:
+npm init
+2. Fill out the required information to initialize our project.
+
+Here’s what my package.json file looked like after initializing my project. Note: Yours may look slightly different, that’s OK.
+
+{
+  "name": "twitter-bot",
+  "version": "1.0.0",
+  "description": "Nodejs Twitter Bot",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bmorelli25/Twitter-Bot.git"
+  },
+  "author": "Brandon Morelli",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/bmorelli25/Twitter-Bot/issues"
+  },
+  "homepage": "https://github.com/bmorelli25/Twitter-Bot#readme"
+}
+3. Next, we’ll save our one needed dependency by running:
+
+npm install --save twitter
+4. Create two files, config.js and app.js
+
+Our config.js file will store the configuration information. The app.js file will contain our twitter bot code.
+
+5. Let’s add the twitter application information from above to our config.js file. Replace each of the blanks below with your corresponding app data that you got from Twitter.
+
+// config.js
+module.exports = {
+  consumer_key: '',
+  consumer_secret: '',
+  access_token_key: '',
+  access_token_secret: ''
+}
+6. We can now require our two dependencies in our app.js file:
+
+// app.js
+var Twitter = require('twitter');
+var config = require('./config.js');
+7. Now that we have all the puzzle pieces, it’s time to bring everything together. We do this by passing our configuration details into Twitter. Add the following code to app.js
+
+var T = new Twitter(config);
+At this point we have our configuration all set up. Our application details (which are necessary to interact with the Twitter API) are being passed into the npm module Twitter. This npm module simplifies the process of interacting with Twitter’s API. Now we can make get and post requests to the API which is what allows us to ‘do things’ on Twitter via our bot!
+
+Build the Bot
+Remember, we’re starting very simple with this tutorial. Let’s visualize the flow of favoriting a tweet: There are two parts. First, you search for Tweets, then you select one and favorite it. Lets work on the search functionality first:
+
+We’re going to set up a params variable which will house our search parameters. There are a lot of parameters we can use. You can see the full list on Twitter’s API documentation here.
+
+var Twitter = require('twitter');
+var config = require('./config.js');
+var T = new Twitter(config);
+// Set up your search parameters
+var params = {
+  q: '#nodejs',
+  count: 10,
+  result_type: 'recent',
+  lang: 'en'
+}
+q is the only required parameter and it stores our search query. In my example we’re searching for tweets containing #nodejs. Feel free to change this to whatever query you’d like.
+
+I also use three optional search parameters:
+
+count — specify the number of tweets you’d like to return
+
+result_type: 'recent' — returns only the most recent results
+
+lang: 'en' — returns only English results
+
+Now that we have our search parameters we plug them into a get request so we can find some tweets!
+
+T.get('search/tweets', params, function(err, data, response) {
+  if(!err){
+    // This is where the magic will happen
+  } else {
+    console.log(err);
+  }
+})
+To gain a deep understanding of what is happening here, you’ll need to read the Twitter API Documentation on GET search/tweets, but I’ll try and provide a basic introduction:
+
+With the help of the npm Twitter module, we are able to make a get request to ‘search/tweets’ and pass in our search params we set previously. This get request returns a callback. If there is no error in this callback, we will run our code to favorite a tweet. If there is an error, we will log the error and be done.
+
+Awesome, so now we just need some code to add into our if(!err) statement above!
+
+Our get request is returning an array of multiple tweets via the data.statuses object. So we need to loop through all of the tweets in that array and favorite each one individually. Here’s how we do that:
+
+// Loop through the returned tweets
+    for(let i = 0; i < data.statuses.length; i++){
+      // Get the tweet Id from the returned data
+      let id = { id: data.statuses[i].id_str }
+      // Try to Favorite the selected Tweet
+      T.post('favorites/create', id, function(err, response){
+        // If the favorite fails, log the error message
+        if(err){
+          console.log(err[0].message);
+        }
+        // If the favorite is successful, log the url of the tweet
+        else{
+          let username = response.user.screen_name;
+          let tweetId = response.id_str;
+          console.log('Favorited: ', `https://twitter.com/${username}/status/${tweetId}`)
+        }
+      });
+    }
+We create a for loop and loop each and every tweet (until we’ve reached the length of data.statuses).
+Inside our for loop we capture the tweet id using data.statuses[i].id_str . We need this id for our post request.
+We run a post request to favorites/create. This is the API route that is used to favorite a tweet. We pass in our tweet id, and the request returns a callback.
+In our callback we look for an error. If there is an error, we log out the error message. Most of the time the error message will occur because we are trying to favorite a tweet that we have already favorited.
+If there is no error, the bot will favorite the tweet! As an added bonus, I use the returned object to construct the url of the newly favorited tweet. This url is then logged to the console making it easy to see which tweets the bot has favorited.
+Run your bot!
+It’s done! Run your bot in the command line with node app.js
+
+That’s it! Watch in glory as your bot favorites and logs each tweet url out!
+
+Full Code
+Here’s what the full app.js file looks like. I also have all the code on my GitHub, so head over there if you want a way to easily download and play with the bot!
+
+
+Coming Soon
+Here’s a list of possible enhancements and additions we can make to our twitter bot. What do you want to learn? Tweet me @BrandonMorelli to let me know and I’ll cover it in Part 2 of this series! Also, I publish a few articles and tutorials each week, please consider entering your email here if you’d like to be added to my once-weekly email list.
+
+Add retweet functionality
+Reply to tweets on a certain subject/hashtag
+Reply to users if they follow you
+Follow Bot
+Run the bot on a server (instead of locally)
+❤ If this post was helpful, please hit the little green heart!
+If tutorials like this interest you and you want to learn more, check out my 5 Best Courses for Learning Full Stack Web Development, or my Three awesome courses for learning Node.js.
+
+
+NodejsWeb DevelopmentJavaScriptTwitterBots
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Medium member since Aug 2017
+Creator of @codeburstio — Frequently posting web development tutorials & articles. Follow me on Twitter too: @BrandonMorelli
+
+codeburst
+codeburst
+Bursts of code to power through your day. Web Development articles, tutorials, and news.
+
+More from codeburst
+React Hooks, First Impressions
+Go to the profile of John Tucker
+John Tucker
+Feb 17
+More from codeburst
+React/Redux/React-Router Private Route Alternative
+Go to the profile of Chris D’Ascoli
+Chris D’Ascoli
+Feb 14
+More from codeburst
+How to make gradients in iOS using Swift
+Go to the profile of Yogesh Manghnani
+Yogesh Manghnani
+Feb 20
+Responses
+Amit Singh
+Write a response…
+Amit Singh
+Conversation between Matthew Woodard and Brandon Morelli.
+Go to the profile of Matthew Woodard
+Matthew Woodard
+Jun 1, 2017
+Great tutorial, thanks!
+
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Jun 2, 2017
+Glad you enjoyed it Matthew. Part two is out now as well:
+
+Build a simple Twitter Bot with Node.js Part 2: DO MORE
+
+In case you missed it, recently I published Build a simple Twitter Bot with Node.js in just 38 lines of code. A lot of…
+hackernoon.com	
+Conversation between Aboobakkar P S and Brandon Morelli.
+Go to the profile of Aboobakkar P S
+Aboobakkar P S
+May 31, 2017
+very interesting article for tech enthusiasts!.
+
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Jun 2, 2017
+Thanks! Glad you enjoyed it. I just released the second article in the series which will show you how to do a lot more with the Twitter API and this bot:
+
+Conversation between Calpa Liu and Brandon Morelli.
+Go to the profile of Calpa Liu
+Calpa Liu
+Jun 11, 2017
+Great! Can I translate it into Chinese and then share in the Chinese programmers community?
+
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Jun 12, 2017
+Yes, definitely! Just please include a link back to my original article
+
+Conversation between Alex Z. and Brandon Morelli.
+Go to the profile of Alex Z.
+Alex Z.
+Jun 2, 2017
+Terrific tutorial and bot. Thank you!
+
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Jun 2, 2017
+Thanks Alex! Part two is out now which walks through a lot more options with the bot:
+
+Build a simple Twitter Bot with Node.js Part 2: DO MORE
+
+In case you missed it, recently I published Build a simple Twitter Bot with Node.js in just 38 lines of code. A lot of…
+hackernoon.com	
+Conversation between Mauro Daprotis and Brandon Morelli.
+Go to the profile of Mauro Daprotis
+Mauro Daprotis
+May 31, 2017
+Great Post! Would love a follow bot guide in the future, thanks!
+
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Jun 2, 2017
+Thanks for the response! I think this will be next on the list!
+
+Conversation with Brandon Morelli.
+Go to the profile of Denis Savchuk
+Denis Savchuk
+Jun 19, 2017
+Looks like you don’t know about callback hell…
+
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Jun 19, 2017
+Eh, it’s one nested callback. I think people will live
+
+Conversation with Brandon Morelli.
+Go to the profile of Avani Martins
+Avani Martins
+Jun 2, 2017
+how do i create and install the package.json
+
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Jun 2, 2017
+You have to use the command prompt.
+
+If you run npm init in the command prompt, you will be asked a series of questions. By answering these questions, your package.json is automatically created.
+
+Conversation with Brandon Morelli.
+Go to the profile of Schalavadi
+Schalavadi
+May 31, 2017
+Hi good evening, good article ! In the above post, you annotated bot.js. Should it read app.js?
+
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Jun 2, 2017
+Thanks so much for pointing that out. I fixed it!
+
+Conversation with Brandon Morelli.
+Go to the profile of Obed Tetteh
+Obed Tetteh
+Jun 16, 2017
+Brandon Morelli how do i share my code with you so you can check my errors. i seem to have the same invalid or expired token problem…thank you
+
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Jun 16, 2017
+Hey man, do you use github at all? Can you upload to a repo there? Otherwise, codepen.io might work. Create a new pen and copy your code in there then I can test it on my end.
+
+Conversation between Mauro Daprotis and Brandon Morelli.
+Go to the profile of Mauro Daprotis
+Mauro Daprotis
+Great Post! Would love a follow bot guide in the future, thanks!
+Go to the profile of Brandon Morelli
+Brandon Morelli
+Jun 2, 2017
+Hey Mauro, just released a second article in the series that will show you how to put together a basic follow bot:
+
+https://hackernoon.com/build-a-simple-twitter-bot-with-node-js-part-2-do-more-2ef1e039715d
