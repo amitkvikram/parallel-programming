@@ -12,4 +12,7 @@ Although the serial version of editor is working fast enough but if we try to op
  We have seen significant improvement while opening large files. 
  
  ### How to run:
- 
+- To run the serial version
+  > make runSerial filename=test.cpp
+- To run the parallel version
+  > make runParallel filename=test.cpp
