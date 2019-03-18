@@ -1,4 +1,4 @@
-Parallelize Text Editor_. 
+# Parallelize Text Editor 
 
 ### Task: 
 Task is to parallelize a given serial text editor. Serial version of the text editor can be created by following this tutorial [KiloTextEditor](https://viewsourcecode.org/snaptoken/kilo/index.html). 
