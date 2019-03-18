@@ -71,4 +71,9 @@ enum editorHighlight {
     HL_MATCH
 };
 
+typedef struct{
+    char *buf;
+    int len;
+}dataToSave;
+
 #endif
